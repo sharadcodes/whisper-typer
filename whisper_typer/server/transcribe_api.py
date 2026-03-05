@@ -18,7 +18,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("whisper-api")
 
-SAMPLE_RATE = 16000
 DEFAULT_MODEL = os.environ.get("WHISPER_MODEL", "small")
 _MODELS_DIR_DEFAULT = (
     "/config"

@@ -95,7 +95,7 @@ The client runs a global hotkey listener:
 The application stores data in `~/.whisper-typer/` by default. You can customize settings using a `.env` file in the project root:
 
 - `WHISPER_MODEL`: Default model (e.g., `tiny`, `small`, `medium`).
-- `WHISPER_MODELS_DIR`: Custom path for model storage.
+- `WHISPER_MODELS_DIR`: Custom path for model storage. Use an **absolute path** (for example `D:/AI/whisper-models` on Windows or `/absolute/path/to/models` on Linux/macOS) so the client and server always use the same directory.
 - `HF_TOKEN`: Hugging Face token for private models.
 
 ---

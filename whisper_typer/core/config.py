@@ -37,15 +37,5 @@ TRANSCRIBE_MODE_BATCH = "Full Capture"
 TRANSCRIBE_MODES = [TRANSCRIBE_MODE_LIVE, TRANSCRIBE_MODE_BATCH]
 
 def get_venv_python() -> str | None:
-    """Path to current Python interpreter."""
-    # When installed, we usually just want the current sys.executable
-    # which is the one managing the environment.
-    if getattr(sys, 'frozen', False):
-        # If running as an EXE
-        return sys.executable
-    
-    # Check if we are in a virtual environment
-    if sys.prefix != sys.base_prefix:
-        return sys.executable
-        
+    """Return the path to the current Python interpreter."""
     return sys.executable

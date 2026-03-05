@@ -117,7 +117,9 @@ class WhisperManager:
                             line = line.strip()
                             if line and not line.startswith("#") and "=" in line:
                                 k, v = line.split("=", 1)
-                                env_vars[k.strip()] = v.strip()
+                                # Strip whitespace and surrounding quotes (single or double)
+                                v = v.strip().strip('"').strip("'")
+                                env_vars[k.strip()] = v
                 except Exception as e:
                     self.log_callback(f"Warning: Failed to read .env file: {e}\n")
 
@@ -151,18 +153,41 @@ class WhisperManager:
 
     def stop_server(self):
         self.server_starting = False
-        if self.local_proc and self.local_proc.poll() is None:
+        proc = self.local_proc
+        if proc and proc.poll() is None:
             self.log_callback("Terminating local server...\n")
-            self.local_proc.terminate()
-            
+            proc.terminate()
+
             def cleanup(p):
                 try:
                     p.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     p.kill()
-                self.local_proc = None
-            
-            threading.Thread(target=cleanup, args=(self.local_proc,), daemon=True).start()
+                # Only clear the reference if it still points to this process,
+                # not to a newly started one.
+                if self.local_proc is p:
+                    self.local_proc = None
+
+            threading.Thread(target=cleanup, args=(proc,), daemon=True).start()
+
+    def close(self):
+        """Synchronous shutdown used during app exit (2-second grace period then kill)."""
+        self.server_starting = False
+        proc = self.local_proc
+        if proc and proc.poll() is None:
+            self.log_callback("Shutting down server...\n")
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                if sys.platform == "win32":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/F", "/T"],
+                        capture_output=True, check=False
+                    )
+                else:
+                    proc.kill()
+            self.local_proc = None
 
     def kill_server(self):
         self.server_starting = False
@@ -215,12 +240,21 @@ class WhisperManager:
         threading.Thread(target=run, daemon=True).start()
 
     def delete_model(self, model_name: str):
-        model_path = os.path.join(MODELS_DIR, model_name)
-        if os.path.isdir(model_path):
-            try:
-                shutil.rmtree(model_path)
-                self.log_callback(f"Deleted model '{model_name}'.\n")
-                return True
-            except Exception as e:
-                self.log_callback(f"Delete failed: {e}\n")
+        # faster_whisper downloads from Systran on HuggingFace; the local cache
+        # directory is named with the HF convention, NOT the bare model name.
+        hf_cache_dir = f"models--Systran--faster-whisper-{model_name}"
+        candidates = [
+            os.path.join(MODELS_DIR, hf_cache_dir),
+            os.path.join(MODELS_DIR, model_name),  # fallback for manual placements
+        ]
+        for model_path in candidates:
+            if os.path.isdir(model_path):
+                try:
+                    shutil.rmtree(model_path)
+                    self.log_callback(f"Deleted model '{model_name}'.\n")
+                    return True
+                except Exception as e:
+                    self.log_callback(f"Delete failed: {e}\n")
+                    return False
+        self.log_callback(f"Model '{model_name}' not found in {MODELS_DIR}.\n")
         return False

@@ -1,4 +1,5 @@
 """Whisper Typer — GUI client."""
+import sys
 import threading
 import time
 import webbrowser
@@ -10,9 +11,9 @@ from pynput.keyboard import Controller as KeyboardController, GlobalHotKeys
 import customtkinter as ctk
 
 from .core.config import (
-    SERVER_IP, SERVER_PORT, SAMPLE_RATE, 
+    SERVER_IP, SERVER_PORT, SAMPLE_RATE,
     SILENCE_WINDOW_SECONDS, SPEECH_THRESHOLD, MIN_SPEECH_SECONDS,
-    STREAM_BLOCK_SIZE, MODELS, TRANSCRIBE_MODE_LIVE, 
+    STREAM_BLOCK_SIZE, MAX_RECORD_SECONDS, MODELS, TRANSCRIBE_MODE_LIVE,
     TRANSCRIBE_MODE_BATCH, TRANSCRIBE_MODES, HEALTH_POLL_SEC
 )
 from .core.utils import trim_trailing_silence, make_status_icon
@@ -36,7 +37,9 @@ class WhisperUI(ctk.CTk):
             status_callback=None # Placeholder if needed later
         )
 
+        self._closed = False
         self._recording = False
+        self._recording_start_time: float = 0.0
         self._processing = False
         self._processing_count = 0
         self._processing_lock = threading.Lock()
@@ -165,7 +168,8 @@ class WhisperUI(ctk.CTk):
         self._hist_scroll.grid_columnconfigure(0, weight=1)
 
         self._hist_empty = ctk.CTkLabel(self._hist_scroll, text="No transcriptions yet.", font=ctk.CTkFont(size=13), text_color="gray45")
-        
+
+        self._hist_card_count = 0
         # Load existing history
         for entry in self.manager.history:
             self._render_history_card(entry)
@@ -282,6 +286,7 @@ class WhisperUI(ctk.CTk):
 
     def _start_recording(self):
         self._recording = True
+        self._recording_start_time = time.time()
         self._recording_chunks = []
         self._is_speaking = False
         self._silence_frames = 0
@@ -289,6 +294,9 @@ class WhisperUI(ctk.CTk):
 
         def cb(indata, _frames, _time, status):
             if not self._recording or indata.size == 0:
+                return
+            if time.time() - self._recording_start_time >= MAX_RECORD_SECONDS:
+                self.after(0, self._stop_recording)
                 return
             with self._audio_lock:
                 block = np.array(indata, copy=True)
@@ -362,6 +370,11 @@ class WhisperUI(ctk.CTk):
                 processed = trim_trailing_silence(audio)
                 text = send_to_server(processed, self._model_var.get())
                 self.after(0, self._handle_result, text, mode, stop_after)
+            except Exception as e:
+                self._log(f"Transcription worker error: {e}\n")
+                # Ensure the UI is always reset so the record button doesn't stay stuck
+                if stop_after:
+                    self.after(0, self._finish_ui_reset)
             finally:
                 self._set_processing_state(False)
                 self._transcribe_queue.task_done()
@@ -381,14 +394,16 @@ class WhisperUI(ctk.CTk):
         self._textbox.configure(state="normal")
         if mode == "replace":
             self._textbox.delete("1.0", "end")
-        
+
         current = self._textbox.get("1.0", "end").strip()
         if current and mode == "append":
             self._textbox.insert("end", " ")
         self._textbox.insert("end", text)
         self._textbox.configure(state="disabled")
-        
-        threading.Thread(target=self._auto_type_text, args=(text,), daemon=True).start()
+
+        # Only auto-type real transcription text, not error/warning messages
+        if not text.startswith("["):
+            threading.Thread(target=self._auto_type_text, args=(text,), daemon=True).start()
         if stop_after:
             self._finish_ui_reset()
 
@@ -424,7 +439,8 @@ class WhisperUI(ctk.CTk):
     def _render_history_card(self, entry):
         self._hist_empty.grid_forget()
         card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
-        card.grid(row=len(self.manager.history), column=0, pady=(0, 8), sticky="ew")
+        card.grid(row=self._hist_card_count, column=0, pady=(0, 8), sticky="ew")
+        self._hist_card_count += 1
         ctk.CTkLabel(card, text=f"{entry['time']} | {entry['model']}", font=ctk.CTkFont(size=10), text_color="gray55").pack(anchor="w", padx=12, pady=(8, 0))
         ctk.CTkLabel(card, text=entry["text"], font=ctk.CTkFont(size=13), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(4, 8))
 
@@ -445,8 +461,11 @@ class WhisperUI(ctk.CTk):
         self._srv_status_badge.configure(text=c["badge"])
         
         if not self._recording:
-            self._hdr_status.configure(text=c["hdr"], text_color=c["color"])
-            
+            if self.manager.server_starting:
+                self._hdr_status.configure(text="● Server Starting…", text_color="#f39c12")
+            else:
+                self._hdr_status.configure(text=c["hdr"], text_color=c["color"])
+
             # Button logic: disable if server is running OR starting
             btn_disabled = (state == "running" or self.manager.server_starting)
             self._btn_record.configure(state=c["btn_state"])
@@ -477,9 +496,15 @@ class WhisperUI(ctk.CTk):
         try:
             h = GlobalHotKeys({"<cmd>+g": on_activate})
             h.start()
+            if sys.platform == "win32":
+                self._log(
+                    "Note: Win+G is reserved by Windows (Xbox Game Bar) and "
+                    "may not work as a global hotkey. Use the Record button instead "
+                    "or disable Game Bar in Windows Settings.\n"
+                )
             h.join()
-        except Exception:
-            pass
+        except Exception as e:
+            self._log(f"Hotkey listener failed: {e}\n")
 
     def _auto_type_text(self, text):
         if not text:
@@ -487,17 +512,20 @@ class WhisperUI(ctk.CTk):
         try:
             time.sleep(0.4)
             kb = KeyboardController()
-            for c in text:
-                kb.type(c)
-                time.sleep(0.005)
+            kb.type(text)
         except Exception:
             pass
 
     def _update_tray_icon(self):
+        if self._closed:
+            return
         if hasattr(self, "_tray_icon") and self._tray_icon:
             s = "recording" if self._recording else ("processing" if self._processing else ("running" if self.manager.server_running else "stopped"))
             self._tray_icon.icon = make_status_icon(s)
-        self.after(500, self._update_tray_icon)
+        try:
+            self.after(500, self._update_tray_icon)
+        except Exception:
+            pass
 
     def _setup_tray(self):
         try:
@@ -520,6 +548,7 @@ class WhisperUI(ctk.CTk):
         self.manager.clear_history()
         for w in self._hist_scroll.winfo_children():
             w.destroy()
+        self._hist_card_count = 0
         self._update_history_count()
 
     def _clear_logs(self):
@@ -536,7 +565,8 @@ class WhisperUI(ctk.CTk):
         self._transcribe_mode_var.set(val)
 
     def _on_close(self):
-        self.manager.stop_server()
+        self._closed = True
+        self.manager.close()
         if hasattr(self, "_tray_icon"):
             self._tray_icon.stop()
         self.destroy()
