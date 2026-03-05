@@ -126,7 +126,7 @@ def _make_icon(color: str) -> Image.Image:
 
 ICON_IDLE      = _make_icon("#4a90d9")   # blue  — ready
 ICON_RECORDING = _make_icon("#e74c3c")   # red   — recording
-ICON_WORKING   = _make_icon("#f39c12")   # amber — transcribing
+ICON_WORKING   = _make_icon("#8e44ad")   # purple — transcribing
 
 
 # ── State ─────────────────────────────────────────────────────────────────────

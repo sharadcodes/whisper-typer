@@ -83,10 +83,10 @@ def _make_status_icon(status: str) -> Image.Image:
     draw = ImageDraw.Draw(img)
     
     color_map = {
-        "running": "#27ae60",    # green
-        "stopped": "#e74c3c",    # red
-        "recording": "#f39c12",  # amber
-        "starting": "#3498db",   # blue
+        "running": "#27ae60",       # green  — server online
+        "stopped": "#000000",       # black  — server offline
+        "recording": "#e74c3c",     # red    — recording
+        "processing": "#8e44ad",    # purple — transcribing
     }
     color = color_map.get(status, "gray50")
     
@@ -129,8 +129,9 @@ class WhisperUI(ctk.CTk):
         self.geometry("960x680")
         self.minsize(420, 540)
 
-        # recording state
+        # recording / processing state
         self._recording       = False
+        self._processing      = False
         self._recording_data: np.ndarray | None = None
         self._last_transcription = ""
 
@@ -177,7 +178,7 @@ class WhisperUI(ctk.CTk):
         self._hdr_status = ctk.CTkLabel(
             hdr, text="● Server Offline",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#e74c3c",
+            text_color="#000000",
         )
         self._hdr_status.grid(row=0, column=1, sticky="e")
 
@@ -607,7 +608,6 @@ class WhisperUI(ctk.CTk):
             self._log("No venv found. Please run 'uv run client_ui.py' to automatically create one and install deps.\n")
             return
 
-        self._set_srv_state("starting")
         self._btn_start_local.configure(state="disabled")
 
         def run_srv():
@@ -663,7 +663,6 @@ class WhisperUI(ctk.CTk):
 
     def _start_docker(self):
         self._log("docker compose up -d --build\n")
-        self._set_srv_state("starting")
 
         def run():
             try:
@@ -984,9 +983,10 @@ class WhisperUI(ctk.CTk):
         self._recording = False
         self._recording_data = None
 
+        self._processing = True
         self._btn_record.configure(state="disabled", text="Transcribing…")
-        self._hdr_status.configure(text="⏳ Transcribing", text_color="#f39c12")
-        self._set_tx_status("Transcribing…", "#f39c12")
+        self._hdr_status.configure(text="⏳ Transcribing", text_color="#8e44ad")
+        self._set_tx_status("Transcribing…", "#8e44ad")
 
         threading.Thread(
             target=self._transcribe_worker, args=(recording,), daemon=True
@@ -1000,6 +1000,7 @@ class WhisperUI(ctk.CTk):
 
     def _show_result(self, text: str):
         text = text.strip()
+        self._processing = False
         self._last_transcription = text
         self._textbox.configure(state="normal")
         self._textbox.delete("1.0", "end")
@@ -1031,7 +1032,7 @@ class WhisperUI(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _set_srv_state(self, state: str):
-        """state: 'running' | 'stopped' | 'starting'
+        """state: 'running' | 'stopped'
         Updates: Server tab card, header badge, and tray icon/tooltip.
         """
         self._current_srv_state = state
@@ -1047,19 +1048,11 @@ class WhisperUI(ctk.CTk):
             },
             "stopped": {
                 "title": "Server Stopped",
-                "color": "#e74c3c",
+                "color": "#000000",
                 "badge": "  OFFLINE  ",
-                "badge_fg": "#7a1b1b",
-                "badge_text": "#f5d4d4",
+                "badge_fg": "#000000",
+                "badge_text": "#f5f5f5",
                 "hdr": "● Server Offline",
-            },
-            "starting": {
-                "title": "Server Starting…",
-                "color": "#f39c12",
-                "badge": "  STARTING  ",
-                "badge_fg": "#7a5c0b",
-                "badge_text": "#f5ecd4",
-                "hdr": "◌ Server Starting…",
             },
         }
         c = cfg.get(state, cfg["stopped"])
@@ -1137,7 +1130,9 @@ class WhisperUI(ctk.CTk):
             self._set_tx_status(f"Tray error: {e}", "#e74c3c")
 
     def _update_tray_icon(self):
-        """Update tray icon to reflect server + recording status."""
+        """Update tray icon to reflect current state.
+        Priority: recording (red) > processing (purple) > server online (green) > offline (black).
+        """
         if not hasattr(self, '_tray_icon') or not self._tray_icon:
             self.after(1000, self._update_tray_icon)
             return
@@ -1145,19 +1140,19 @@ class WhisperUI(ctk.CTk):
         if self._recording:
             status = "recording"
             title = "Whisper Typer — Recording…"
+        elif self._processing:
+            status = "processing"
+            title = "Whisper Typer — Transcribing…"
         elif self._server_running:
             status = "running"
             title = "Whisper Typer — Server Online"
         else:
-            srv_state = getattr(self, "_current_srv_state", "stopped")
-            if srv_state == "starting":
-                status = "starting"
-                title = "Whisper Typer — Server Starting…"
-            else:
-                status = "stopped"
-                title = "Whisper Typer — Server Offline"
+            status = "stopped"
+            title = "Whisper Typer — Server Offline"
 
-        if status != self._tray_status or self._recording != self._tray_recording:
+        prev = (self._tray_status, self._tray_recording)
+        curr = (status, self._recording)
+        if curr != prev:
             try:
                 self._tray_status = status
                 self._tray_recording = self._recording
@@ -1190,3 +1185,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

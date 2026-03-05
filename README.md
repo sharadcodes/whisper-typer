@@ -34,23 +34,32 @@ You can run both locally using `uv`, or run the server in Docker while running t
 
 ---
 
-## Run (detailed)
+## UI Tabs
 
-### 1. Run the client UI
+### Transcribe
 
-```powershell
-uv run client_ui.py
-```
+- Pick a model (tiny, base, small, medium, large-v3) and record.
+- Press the record button or use **Win+G** to toggle recording.
+- Transcription result is displayed and automatically typed into the focused window.
 
-`client_ui.py` is a complete dashboard that lets you:
-- **Transcribe**: Pick a model (tiny, base, small, medium, large-v3) and record.
-- **Manage Server**: 
-  - **Start Local**: Automatically installs dependencies (`fastapi`, `faster-whisper`, etc.) and runs the server.
-  - **Start Docker**: Runs `docker compose up -d`.
-  - **Model Manager**: Pre-download or delete models to save space.
-- **View Logs**: See real-time server output.
+### History
 
-### 2. Manual Server Setup (Optional)
+- Every successful transcription is saved with a timestamp and the model used.
+- Entries persist across app restarts in a local `history.json` file.
+- Copy any past transcription to the clipboard with one click.
+- Clear all history with the **Clear All** button.
+
+### Server
+
+- **Status card** shows the server's live status (Online / Offline), the server URL, and the active model.
+- **Start Local**: Automatically installs dependencies (`fastapi`, `faster-whisper`, etc.) and runs the server.
+- **Start Docker**: Runs `docker compose up -d`.
+- **Model Manager**: Pre-download or delete models to save space.
+- **Logs**: Real-time server output with a clear button.
+
+---
+
+## Manual Server Setup (Optional)
 
 If you prefer not to use the UI's server management:
 
@@ -79,14 +88,20 @@ The client runs a global hotkey listener:
 - **Win+G** — Toggle recording.
 - When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
 
-### Status icon colors
+### System tray icon colors
 
-The system tray status icon uses the following colors:
+| State | Color | Meaning |
+|-------|-------|---------|
+| Idle (server online) | 🟢 Green | Server is running, ready to transcribe |
+| Server offline | ⚫ Black | Server is not reachable |
+| Recording | 🔴 Red | Audio is being captured |
+| Processing | 🟣 Purple | Transcribing audio |
 
-- **Running**: 🟢 green
-- **Stopped**: 🔴 red
-- **Recording**: 🟠 amber
-- **Starting**: 🔵 blue
+---
+
+## Default Model
+
+The default Whisper model is **small** (good balance of speed and accuracy on CPU). Override it by setting `WHISPER_MODEL` in your `.env` file.
 
 ---
 
@@ -101,8 +116,9 @@ The system tray status icon uses the following colors:
 
 ## Config
 
-- **.env file**: Create a `.env` file from `.env.example` to set the default `WHISPER_MODEL` or provide an `HF_TOKEN` for faster downloads.
+- **.env file**: Create a `.env` file to set the default `WHISPER_MODEL` or provide an `HF_TOKEN` for faster downloads.
 - **Server address:** Configured in `client_ui.py` (`SERVER_IP` / `SERVER_PORT` — default `127.0.0.1:8000`).
+- **history.json**: Transcription history is stored locally in the project root. It is git-ignored.
 
 ---
 
