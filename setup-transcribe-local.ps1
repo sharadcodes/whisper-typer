@@ -57,4 +57,4 @@ WhisperModel(model, device='cpu', compute_type='int8', download_root=models_dir)
 print(f'Model [{model}] ready.')
 "@
 
-Write-Host "`nDone. Start the server with: uv run server.py --local" -ForegroundColor Green
+Write-Host "`nDone. Start the transcribe server with: .\start-transcribe-local.ps1" -ForegroundColor Green

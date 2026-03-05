@@ -4,24 +4,24 @@ Push-to-talk voice transcription using Faster-Whisper. System tray app + hotkey;
 
 ## Quick start
 
-1. **Start the server** (Docker):
+1. **Start the transcribe server** (Docker):
 
    ```powershell
    # Windows
-   .\start-server-docker.ps1
+   .\start-transcribe-docker.ps1
    ```
 
    ```sh
    # macOS / Linux
-   chmod +x start-server-docker.sh && ./start-server-docker.sh
+   chmod +x start-transcribe-docker.sh && ./start-transcribe-docker.sh
    ```
 
    On Windows: uses WSL when available (for GPU). On Linux: detects GPU. Use `-NoWsl` to force CPU on Windows.
 
-2. **Run the app**:
+2. **Run the client**:
 
    ```powershell
-   uv run server.py
+   uv run client.py
    ```
 
    `uv` creates venv and installs dependencies automatically.
@@ -32,10 +32,13 @@ Push-to-talk voice transcription using Faster-Whisper. System tray app + hotkey;
 
 ## Scripts
 
-| Script | Purpose |
+| Script / File | Purpose |
 |-------|---------|
-| `start-server-docker.ps1` / `start-server-docker.sh` | Start Docker container (faster-whisper server). |
-| `setup-server.ps1` / `setup-server.sh` | Setup local server (venv, deps, model). For running without Docker. |
+| `start-transcribe-docker.ps1` / `start-transcribe-docker.sh` | Start transcribe server in Docker. |
+| `start-transcribe-local.ps1` / `start-transcribe-local.sh` | Start transcribe server locally (no Docker). Run `setup-transcribe-local` first. |
+| `setup-transcribe-local.ps1` / `setup-transcribe-local.sh` | One-time setup: venv, deps, model download. For running without Docker. |
+| `client.py` | Tray + hotkey client — records on Alt+PageUp and auto-types the result. |
+| `client_ui.py` | Window UI client — record button, shows transcription, copy/clear. |
 
 ---
 
@@ -47,12 +50,24 @@ Push-to-talk voice transcription using Faster-Whisper. System tray app + hotkey;
 
 ```powershell
 # Windows
-.\start-server-docker.ps1
+.\start-transcribe-docker.ps1
 ```
 
 ```sh
 # macOS / Linux
-./start-server-docker.sh
+./start-transcribe-docker.sh
+```
+
+**Local (no Docker):**
+
+```powershell
+# Windows — run setup-transcribe-local.ps1 first
+.\start-transcribe-local.ps1
+```
+
+```sh
+# macOS / Linux — run setup-transcribe-local.sh first
+chmod +x start-transcribe-local.sh && ./start-transcribe-local.sh
 ```
 
 **Manual Docker:**
@@ -67,29 +82,37 @@ docker compose up -d --build
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 ```
 
-**NVIDIA GPU on Windows (WSL2):** `start-server-docker.ps1` auto-uses WSL when available. One-time setup: install [NVIDIA Container Toolkit in WSL2](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#installing-on-ubuntu-and-debian). Use `.\start-server-docker.ps1 -NoWsl` to force CPU mode.
+**NVIDIA GPU on Windows (WSL2):** `start-transcribe-docker.ps1` auto-uses WSL when available. One-time setup: install [NVIDIA Container Toolkit in WSL2](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#installing-on-ubuntu-and-debian). Use `.\start-transcribe-docker.ps1 -NoWsl` to force CPU mode.
 
 Logs: `docker compose logs -f faster-whisper`
 
-### 2. Run the app
+### 2. Run the client
+
+**Tray + hotkey client** (Alt+PageUp to record, auto-types result):
 
 ```powershell
-uv run server.py
+uv run client.py
+```
+
+**Window UI client** (record button, shows text, copy/clear — no hotkeys):
+
+```powershell
+uv run client_ui.py
 ```
 
 Or with standard Python (after `uv venv` and `uv pip install .`):
 
 ```powershell
 .venv\Scripts\Activate.ps1   # Windows
-python server.py
+python client.py       # or: python client_ui.py
 ```
 
 ```sh
 source .venv/bin/activate     # macOS / Linux
-python server.py
+python client.py       # or: python client_ui.py
 ```
 
-On first run you pick a model (1–5) at the CLI; then the tray starts.
+On first run of `client.py` you pick a model (1–5) at the CLI; then the tray starts. `client_ui.py` has a model selector in the window.
 
 ### 3. Use the system tray or keyboard shortcut
 
@@ -115,9 +138,9 @@ When done, the transcription is **automatically typed** into the focused input f
 
 ## Config
 
-- **Server:** In `server.py`, `SERVER_IP` / `SERVER_PORT` (default `127.0.0.1:8000`)
+- **Server:** In `client.py`, `SERVER_IP` / `SERVER_PORT` (default `127.0.0.1:8000`)
 - **Model:** Chosen at app startup (CLI prompt 1–5)
-- **GPU:** Linux: `docker-compose.gpu.yml` + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). Windows: `start-server-docker.ps1` uses WSL when available; install toolkit in WSL2.
+- **GPU:** Linux: `docker-compose.gpu.yml` + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). Windows: `start-transcribe-docker.ps1` uses WSL when available; install toolkit in WSL2.
 
 ---
 

@@ -50,4 +50,4 @@ print(f"Model [{model}] ready.")
 EOF
 
 echo ""
-echo "Done. Start the server with: uv run server.py --local"
+echo "Done. Start the transcribe server with: ./start-transcribe-local.sh"
