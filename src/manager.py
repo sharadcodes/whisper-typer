@@ -3,13 +3,12 @@ import json
 import shutil
 import subprocess
 import threading
-import time
 from datetime import datetime
 from typing import Callable, Any
 
 from .config import (
     ROOT_DIR, HISTORY_FILE, SERVER_IP, SERVER_PORT,
-    LOCAL_SERVER_PACKAGES, get_venv_python
+    get_venv_python
 )
 from .api import is_server_reachable
 

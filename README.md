@@ -19,7 +19,7 @@ Supports Windows, macOS, and Linux.
    - Pick a model.
    - Select an input mode:
      - **Live typing**: sends chunks after short pauses.
-     - **Recording only**: sends everything when you stop.
+     - **Full Capture**: sends everything when you stop.
    - Press **Win+G** to start/stop recording.
    - Text is typed into the active window automatically.
 
@@ -29,10 +29,11 @@ Supports Windows, macOS, and Linux.
 %%{init: {"flowchart": {"htmlLabels": false}} }%%
 flowchart TD
     A["User Hotkey\nWin+G"] --> B["Audio Input Stream"]
-    B --> C{"Input Mode"}
+    C{"Input Mode"}
     C -->|Live typing| D["Silence-based Chunking"]
-    C -->|Recording only| E["Full Recording Capture"]
+    C -->|Full Capture| E["Full Recording Capture"]
     D --> F["Transcription Queue\nFIFO"]
+
     E --> F
     F --> G["Server API\nTranscribe"]
     G --> H["Transcription Service"]
@@ -44,7 +45,7 @@ flowchart TD
 - Audio is captured from input stream.
 - App checks selected mode:
   - **Live typing** → chunks split by silence windows and enqueued.
-  - **Recording only** → all chunks captured until stop, then enqueued.
+  - **Full Capture** → all chunks captured until stop, then enqueued.
 - Queue processes each chunk in order (FIFO).
 - For each chunk:
   - Send audio to server via API.

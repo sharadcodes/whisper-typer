@@ -22,7 +22,7 @@ STREAM_BLOCK_SIZE = 512        # input callback block size in frames
 # ── App Logic ─────────────────────────────────────────────────────────────────
 MODELS = ["tiny", "base", "small", "medium", "large-v3"]
 TRANSCRIBE_MODE_LIVE = "Live typing"
-TRANSCRIBE_MODE_BATCH = "Recording only"
+TRANSCRIBE_MODE_BATCH = "Full Capture"
 TRANSCRIBE_MODES = [TRANSCRIBE_MODE_LIVE, TRANSCRIBE_MODE_BATCH]
 
 LOCAL_SERVER_PACKAGES = [

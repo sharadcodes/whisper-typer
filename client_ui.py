@@ -12,7 +12,7 @@ from src.config import (
     SERVER_IP, SERVER_PORT, SAMPLE_RATE, 
     SILENCE_WINDOW_SECONDS, SPEECH_THRESHOLD, MIN_SPEECH_SECONDS,
     STREAM_BLOCK_SIZE, MODELS, TRANSCRIBE_MODE_LIVE, 
-    TRANSCRIBE_MODES, HEALTH_POLL_SEC
+    TRANSCRIBE_MODE_BATCH, TRANSCRIBE_MODES, HEALTH_POLL_SEC
 )
 from src.utils import trim_trailing_silence, make_status_icon
 from src.api import send_to_server
@@ -49,7 +49,7 @@ class WhisperUI(ctk.CTk):
         self._silence_frames = 0
         self._speech_frames = 0
         self._last_transcription = ""
-        self._transcribe_mode_var = ctk.StringVar(value=TRANSCRIBE_MODE_LIVE)
+        self._transcribe_mode_var = ctk.StringVar(value=TRANSCRIBE_MODE_BATCH)
 
         self._build_ui()
         self._setup_tray()
@@ -78,7 +78,7 @@ class WhisperUI(ctk.CTk):
         hdr.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(hdr, text="Whisper Typer", font=ctk.CTkFont(size=20, weight="bold")).grid(row=0, column=0, sticky="w")
-        self._hdr_status = ctk.CTkLabel(hdr, text="● Server Offline", font=ctk.CTkFont(size=12, weight="bold"), text_color="#000000")
+        self._hdr_status = ctk.CTkLabel(hdr, text="● Server Offline", font=ctk.CTkFont(size=12, weight="bold"), text_color="gray45")
         self._hdr_status.grid(row=0, column=1, sticky="e")
 
         # Tabs
@@ -121,13 +121,23 @@ class WhisperUI(ctk.CTk):
         row2.grid(row=2, column=0, pady=(0, 12), sticky="ew")
         ctk.CTkLabel(row2, text="Input mode", font=ctk.CTkFont(size=12)).grid(row=0, column=0, sticky="w")
         self._mode_selector = ctk.CTkSegmentedButton(row2, values=TRANSCRIBE_MODES, command=self._on_mode_change, width=300, corner_radius=10)
-        self._mode_selector.set(TRANSCRIBE_MODE_LIVE)
+        self._mode_selector.set(TRANSCRIBE_MODE_BATCH)
         self._mode_selector.grid(row=0, column=1, padx=(12, 0), sticky="w")
 
+        # Mode Info
+        info_text = (
+            "• Live typing: Sends audio chunks as you speak (faster, but may split words).\n"
+            "• Full Capture: Sends the full recording when you stop (more accurate context)."
+        )
+        ctk.CTkLabel(
+            tab, text=info_text, font=ctk.CTkFont(size=11), 
+            text_color="gray50", justify="left"
+        ).grid(row=3, column=0, pady=(0, 10), sticky="w")
+
         # Output
-        ctk.CTkLabel(tab, text="Transcription", font=ctk.CTkFont(size=12), text_color="gray60").grid(row=3, column=0, sticky="w")
+        ctk.CTkLabel(tab, text="Transcription", font=ctk.CTkFont(size=12), text_color="gray60").grid(row=4, column=0, sticky="w")
         self._textbox = ctk.CTkTextbox(tab, font=ctk.CTkFont(size=14), corner_radius=8, wrap="word")
-        self._textbox.grid(row=4, column=0, pady=(4, 8), sticky="nsew")
+        self._textbox.grid(row=5, column=0, pady=(4, 8), sticky="nsew")
         self._textbox.configure(state="disabled")
 
         self._tx_status = ctk.CTkLabel(tab, text="Ready. Press Win+G to start recording.", font=ctk.CTkFont(size=11), text_color="gray55")
@@ -381,7 +391,7 @@ class WhisperUI(ctk.CTk):
     def _set_srv_state(self, state):
         cfg = {
             "running": {"title": "Server Running", "color": "#27ae60", "badge": "  ONLINE  ", "hdr": "● Server Online"},
-            "stopped": {"title": "Server Stopped", "color": "#000000", "badge": "  OFFLINE  ", "hdr": "● Server Offline"},
+            "stopped": {"title": "Server Stopped", "color": "gray45", "badge": "  OFFLINE  ", "hdr": "● Server Offline"},
         }
         c = cfg[state]
         self._srv_status_label.configure(text=c["title"], text_color=c["color"])
