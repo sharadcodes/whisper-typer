@@ -85,7 +85,7 @@ def _send_via_fastapi(audio: np.ndarray) -> str | None:
             method="POST",
             headers={"Content-Type": "application/octet-stream"},
         )
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             text = json.loads(resp.read().decode()).get("text", "")
             log.info("Transcript received: %r", text)
             return text
@@ -170,10 +170,6 @@ def _stop_and_transcribe(icon: pystray.Icon) -> None:
         type_text(text)
         icon.icon  = ICON_IDLE
         icon.title = "Whisper Typer — Alt+PageUp to record"
-        try:
-            icon.notify(text[:200] if text else "(empty)", "Whisper Typer")
-        except Exception:
-            pass  # notifications not supported on all platforms
         log.info("✓ Done")
 
     threading.Thread(target=worker, daemon=True).start()
