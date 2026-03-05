@@ -2,7 +2,13 @@
 name = "whisper-typer"
 version = "0.1.0"
 description = "Push-to-talk voice transcription using Faster-Whisper"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Sharad Raj Singh Maurya", email = "dev_sharad@outlook.com" }
+]
+keywords = ["whisper", "transcription", "voice-to-text", "automation", "accessibility"]
 dependencies = [
     "sounddevice",
     "numpy",
@@ -11,3 +17,8 @@ dependencies = [
     "pynput",
     "customtkinter",
 ]
+
+[project.urls]
+Homepage = "https://github.com/sharadcodes/whisper-typer"
+Repository = "https://github.com/sharadcodes/whisper-typer"
+Issues = "https://github.com/sharadcodes/whisper-typer/issues"

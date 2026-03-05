@@ -109,22 +109,41 @@ The default Whisper model is **small** (good balance of speed and accuracy on CP
 
 - **OS:** Windows, macOS, or Linux
 - **Python:** 3.10+
-- **Package manager:** `uv` (recommended)
+- **Package manager:** [uv](https://github.com/astral-sh/uv) (recommended)
 - **Docker:** Optional, for isolated container deployment
 
 ---
 
-## Config
+## Installation
 
-- **.env file**: Create a `.env` file to set the default `WHISPER_MODEL` or provide an `HF_TOKEN` for faster downloads.
-- **Server address:** Configured in `client_ui.py` (`SERVER_IP` / `SERVER_PORT` — default `127.0.0.1:8000`).
-- **history.json**: Transcription history is stored locally in the project root. It is git-ignored.
+1. **Install `uv`** (if you haven't already):
+   ```powershell
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+   *For macOS/Linux:*
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. **Clone the repo**:
+   ```bash
+   git clone https://github.com/sharadcodes/whisper-typer.git
+   cd whisper-typer
+   ```
+
+3. **Run the app**:
+   ```bash
+   uv run client_ui.py
+   ```
 
 ---
 
-## API
+## Contributing
 
-The server exposes a **FastAPI** endpoint on port **8000**:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
-- **GET /** — health check and service info
-- **POST /transcribe?model=small** — upload raw PCM audio (16 kHz, 16-bit, mono); returns `{"text": "..."}`
+---
+
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
