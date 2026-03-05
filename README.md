@@ -13,7 +13,8 @@ Supports Windows, macOS, and Linux.
 2. **In the app**:
    - The server auto-starts on launch.
    - Choose a **Model** and **Input Mode** (Live or Full Capture).
-   - Press **Win+G** (Windows) or **Cmd+G** (macOS) to start/stop recording.
+   - Press **Cmd+G** (macOS) to start/stop recording.
+   - On Windows, **Win+G** may be intercepted by Xbox Game Bar; if so, use the in-app **Start Recording** button or disable the Game Bar shortcut in Windows settings.
    - Text types into your active window automatically.
 
 ---
@@ -63,7 +64,8 @@ flowchart TD
 
 The client runs a global hotkey listener:
 
-- **Win+G** (Windows) or **Cmd+G** (macOS) — Toggle recording.
+- **Cmd+G** (macOS) — Toggle recording.
+- **Win+G** (Windows) may be reserved by Xbox Game Bar; if it does not work, use the in-app **Start Recording** button.
 - When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
 
 > **macOS Users:** 
