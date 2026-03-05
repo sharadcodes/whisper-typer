@@ -19,6 +19,9 @@ build/
 # Local models (Whisper)
 models/
 
+# Transcription history
+history.json
+
 # IDE / Editor
 .idea/
 .vscode/

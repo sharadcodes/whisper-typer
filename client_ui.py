@@ -29,7 +29,8 @@ SAMPLE_RATE        = 16000
 MAX_RECORD_SECONDS = 300
 HEALTH_POLL_SEC    = 3
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR      = os.path.dirname(os.path.abspath(__file__))
+HISTORY_FILE  = os.path.join(ROOT_DIR, "history.json")
 MODELS   = ["tiny", "base", "small", "medium", "large-v3"]
 LOCAL_SERVER_PACKAGES = [
     ("fastapi", "fastapi"),
@@ -125,7 +126,7 @@ class WhisperUI(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         self.title("Whisper Typer")
-        self.geometry("480x680")
+        self.geometry("960x680")
         self.minsize(420, 540)
 
         # recording state
@@ -134,7 +135,7 @@ class WhisperUI(ctk.CTk):
         self._last_transcription = ""
 
         # transcript history: list of {"time": str, "model": str, "text": str}
-        self._history: list[dict] = []
+        self._history: list[dict] = self._load_history()
 
         # server process handles
         self._local_proc: subprocess.Popen | None = None   # local uvicorn
@@ -244,6 +245,28 @@ class WhisperUI(ctk.CTk):
         )
         self._tx_status.grid(row=4, column=0, pady=(8, 0), sticky="w")
 
+    # ── History persistence ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_history() -> list[dict]:
+        if os.path.isfile(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        return []
+
+    @staticmethod
+    def _save_history_to_disk(history: list[dict]):
+        try:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
     # ── History tab ────────────────────────────────────────────────────────────
 
     def _build_history_tab(self):
@@ -285,25 +308,27 @@ class WhisperUI(ctk.CTk):
             text_color="gray45",
             justify="center",
         )
-        self._hist_empty.grid(row=0, column=0, pady=60)
 
-    def _add_history_entry(self, text: str, model: str):
-        """Append a transcription to history and update the UI."""
-        ts = datetime.now().strftime("%I:%M %p").lstrip("0")
-        date_str = datetime.now().strftime("%b %d")
-        entry = {"time": f"{date_str}, {ts}", "model": model, "text": text}
-        self._history.append(entry)
+        # Replay persisted history into the UI
+        if self._history:
+            for entry in self._history:
+                self._render_history_card(entry)
+            n = len(self._history)
+            self._hist_count_label.configure(
+                text=f"{n} transcription{'s' if n != 1 else ''}"
+            )
+        else:
+            self._hist_empty.grid(row=0, column=0, pady=60)
 
-        # Hide the empty-state label
-        self._hist_empty.grid_forget()
-
-        idx = len(self._history) - 1
+    def _render_history_card(self, entry: dict, idx: int | None = None):
+        """Create a card widget for a single history entry."""
+        if idx is None:
+            idx = len(self._hist_scroll.winfo_children())
 
         card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
         card.grid(row=idx, column=0, pady=(0, 8), sticky="ew")
         card.grid_columnconfigure(0, weight=1)
 
-        # Top row: timestamp + model
         meta = ctk.CTkFrame(card, fg_color="transparent")
         meta.grid(row=0, column=0, padx=12, pady=(10, 0), sticky="ew")
         meta.grid_columnconfigure(0, weight=1)
@@ -315,7 +340,7 @@ class WhisperUI(ctk.CTk):
         ).grid(row=0, column=0, sticky="w")
 
         ctk.CTkLabel(
-            meta, text=model,
+            meta, text=entry["model"],
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="gray50",
             corner_radius=3,
@@ -323,17 +348,15 @@ class WhisperUI(ctk.CTk):
             padx=6,
         ).grid(row=0, column=1, sticky="e")
 
-        # Transcription text
         ctk.CTkLabel(
-            card, text=text,
+            card, text=entry["text"],
             font=ctk.CTkFont(size=13),
             wraplength=380,
             justify="left",
             anchor="w",
         ).grid(row=1, column=0, padx=12, pady=(6, 4), sticky="ew")
 
-        # Copy button
-        def _copy(t=text):
+        def _copy(t=entry["text"]):
             self.clipboard_clear()
             self.clipboard_append(t)
             self._set_tx_status("Copied to clipboard.", "gray55")
@@ -345,17 +368,26 @@ class WhisperUI(ctk.CTk):
             command=_copy,
         ).grid(row=2, column=0, padx=12, pady=(2, 10), sticky="w")
 
-        # Update counter
+    def _add_history_entry(self, text: str, model: str):
+        """Append a transcription to history, update UI, and persist."""
+        ts = datetime.now().strftime("%I:%M %p").lstrip("0")
+        date_str = datetime.now().strftime("%b %d")
+        entry = {"time": f"{date_str}, {ts}", "model": model, "text": text}
+        self._history.append(entry)
+
+        self._hist_empty.grid_forget()
+        self._render_history_card(entry, idx=len(self._history) - 1)
+
         n = len(self._history)
         self._hist_count_label.configure(
             text=f"{n} transcription{'s' if n != 1 else ''}"
         )
-
-        # Scroll to bottom
         self._hist_scroll._parent_canvas.yview_moveto(1.0)
 
+        self._save_history_to_disk(self._history)
+
     def _clear_history(self):
-        """Remove all history entries."""
+        """Remove all history entries from UI and disk."""
         self._history.clear()
         for widget in self._hist_scroll.winfo_children():
             widget.destroy()
@@ -369,6 +401,11 @@ class WhisperUI(ctk.CTk):
         )
         self._hist_empty.grid(row=0, column=0, pady=60)
         self._hist_count_label.configure(text="0 transcriptions")
+
+        try:
+            os.remove(HISTORY_FILE)
+        except OSError:
+            pass
 
     # ── Server tab ────────────────────────────────────────────────────────────
 
