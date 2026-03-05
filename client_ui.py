@@ -10,7 +10,9 @@ import shutil
 import subprocess
 import sys
 import threading
+import logging
 import time
+from queue import Queue
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -28,10 +30,17 @@ SERVER_PORT        = 8000
 SAMPLE_RATE        = 16000
 MAX_RECORD_SECONDS = 300
 HEALTH_POLL_SEC    = 3
+SILENCE_WINDOW_SECONDS = 1.5   # pause after this long to flush a chunk
+SPEECH_THRESHOLD   = 0.01     # RMS/max amplitude threshold to detect speech
+MIN_SPEECH_SECONDS = 0.2      # ignore tiny mouth-noise/ clicks
+STREAM_BLOCK_SIZE  = 512      # input callback block size in frames
 
 ROOT_DIR      = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE  = os.path.join(ROOT_DIR, "history.json")
 MODELS   = ["tiny", "base", "small", "medium", "large-v3"]
+TRANSCRIBE_MODE_LIVE = "Live typing"
+TRANSCRIBE_MODE_BATCH = "Recording only"
+TRANSCRIBE_MODES = [TRANSCRIBE_MODE_LIVE, TRANSCRIBE_MODE_BATCH]
 LOCAL_SERVER_PACKAGES = [
     ("fastapi", "fastapi"),
     ("uvicorn", "uvicorn"),
@@ -130,10 +139,20 @@ class WhisperUI(ctk.CTk):
         self.minsize(420, 540)
 
         # recording / processing state
-        self._recording       = False
-        self._processing      = False
-        self._recording_data: np.ndarray | None = None
+        self._recording           = False
+        self._processing          = False
+        self._processing_count    = 0
+        self._processing_lock     = threading.Lock()
+        self._transcribe_lock     = threading.Lock()
+        self._transcribe_queue: Queue = Queue()
+        self._recording_stream: sd.InputStream | None = None
+        self._recording_chunks: list[np.ndarray] = []
+        self._is_speaking = False
+        self._silence_frames = 0
+        self._speech_frames = 0
+        self._audio_lock = threading.Lock()
         self._last_transcription = ""
+        self._transcribe_mode_var = ctk.StringVar(value=TRANSCRIBE_MODE_LIVE)
 
         # transcript history: list of {"time": str, "model": str, "text": str}
         self._history: list[dict] = self._load_history()
@@ -144,12 +163,15 @@ class WhisperUI(ctk.CTk):
 
         # last known server health
         self._server_running = False
+        self._auto_server_start_attempted = False
 
         self._build_ui()
         self._setup_tray()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self._set_srv_state("stopped")
         threading.Thread(target=self._health_worker, daemon=True).start()
+        threading.Thread(target=self._transcription_queue_worker, daemon=True).start()
+        threading.Thread(target=self._auto_start_server_if_not_running, daemon=True).start()
         
         # Start hotkey listener for Win+G (record)
         threading.Thread(target=self._hotkey_listener, daemon=True).start()
@@ -199,7 +221,7 @@ class WhisperUI(ctk.CTk):
     def _build_transcribe_tab(self):
         tab = self._tab_t
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
+        tab.grid_rowconfigure(4, weight=1)
 
         # Model row
         model_row = ctk.CTkFrame(tab, fg_color="transparent")
@@ -208,25 +230,59 @@ class WhisperUI(ctk.CTk):
         self._model_var = ctk.StringVar(value="small")
         ctk.CTkOptionMenu(model_row, values=MODELS, variable=self._model_var, width=160).pack(side="left")
 
-        # Record button
+        # Recording and utility buttons
+        control_row = ctk.CTkFrame(tab, fg_color="transparent")
+        control_row.grid(row=1, column=0, pady=(0, 16), sticky="ew")
+        control_row.grid_columnconfigure((0, 1), weight=1)
+
         self._btn_record = ctk.CTkButton(
-            tab,
+            control_row,
             text="⏺  Start Recording",
             font=ctk.CTkFont(size=15, weight="bold"),
             height=52,
             corner_radius=12,
             command=self._toggle_recording,
         )
-        self._btn_record.grid(row=1, column=0, pady=(0, 16), sticky="ew")
+        self._btn_record.grid(row=0, column=0, sticky="ew")
         self._btn_rec_fg    = self._btn_record.cget("fg_color")
         self._btn_rec_hover = self._btn_record.cget("hover_color")
+
+        self._btn_clear = ctk.CTkButton(
+            control_row,
+            text="🧹  Clear Text",
+            font=ctk.CTkFont(size=15, weight="bold"),
+            height=52,
+            corner_radius=12,
+            fg_color="#636e72",
+            hover_color="#4f585d",
+            command=self._clear_transcript_text,
+        )
+        self._btn_clear.grid(row=0, column=1, padx=(10, 0), sticky="ew")
+
+        # Input mode row
+        mode_row = ctk.CTkFrame(tab, fg_color="transparent")
+        mode_row.grid(row=2, column=0, pady=(0, 12), sticky="ew")
+        mode_row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            mode_row, text="Input mode", font=ctk.CTkFont(size=12),
+        ).grid(row=0, column=0, sticky="w")
+        self._mode_selector = ctk.CTkSegmentedButton(
+            mode_row,
+            values=TRANSCRIBE_MODES,
+            command=self._on_transcribe_mode_change,
+            width=300,
+            corner_radius=10,
+        )
+        self._mode_selector.set(TRANSCRIBE_MODE_LIVE)
+        self._mode_selector.grid(row=0, column=1, padx=(12, 0), sticky="w")
 
         # Transcription label
         ctk.CTkLabel(
             tab, text="Transcription",
             font=ctk.CTkFont(size=12),
             text_color="gray60",
-        ).grid(row=2, column=0, sticky="w")
+        ).grid(row=3, column=0, sticky="w")
 
         # Transcription box
         self._textbox = ctk.CTkTextbox(
@@ -235,7 +291,7 @@ class WhisperUI(ctk.CTk):
             corner_radius=8,
             wrap="word",
         )
-        self._textbox.grid(row=3, column=0, pady=(4, 8), sticky="nsew")
+        self._textbox.grid(row=4, column=0, pady=(4, 8), sticky="nsew")
         self._textbox.configure(state="disabled")
 
         # Status label
@@ -244,7 +300,31 @@ class WhisperUI(ctk.CTk):
             font=ctk.CTkFont(size=11),
             text_color="gray55",
         )
-        self._tx_status.grid(row=4, column=0, pady=(8, 0), sticky="w")
+        self._tx_status.grid(row=5, column=0, pady=(8, 0), sticky="w")
+
+    def _clear_transcript_text(self):
+        self._textbox.configure(state="normal")
+        self._textbox.delete("1.0", "end")
+        self._textbox.configure(state="disabled")
+        self._last_transcription = ""
+        self._set_tx_status("Transcript cleared.", "gray55")
+
+    def _is_live_mode(self) -> bool:
+        return self._transcribe_mode_var.get() == TRANSCRIBE_MODE_LIVE
+
+    def _on_transcribe_mode_change(self, _value: str | None = None):
+        if _value is not None:
+            self._transcribe_mode_var.set(_value)
+            if self._recording:
+                self._mode_selector.set(self._transcribe_mode_var.get())
+                return
+
+        if self._recording:
+            return
+        if self._is_live_mode():
+            self._set_tx_status("Ready. Press Win+G to start recording.", "gray55")
+        else:
+            self._set_tx_status("Recording only mode: stop to send.", "gray55")
 
     # ── History persistence ─────────────────────────────────────────────────
 
@@ -793,6 +873,36 @@ class WhisperUI(ctk.CTk):
     # HEALTH CHECK
     # ══════════════════════════════════════════════════════════════════════════
 
+    def _is_server_reachable(self, timeout_sec: float = 2.0) -> bool:
+        try:
+            with urllib.request.urlopen(f"http://{SERVER_IP}:{SERVER_PORT}/", timeout=timeout_sec) as r:
+                if r.status != 200:
+                    return False
+                body = json.loads(r.read().decode())
+                if isinstance(body, dict):
+                    return body.get("service") == "whisper-transcribe" or bool(body)
+                return bool(body)
+        except Exception:
+            return False
+
+    def _auto_start_server_if_not_running(self):
+        if self._auto_server_start_attempted:
+            return
+
+        self._auto_server_start_attempted = True
+        time.sleep(0.8)
+
+        if self._is_server_reachable():
+            self.after(0, lambda: self._set_srv_state("running"))
+            return
+
+        if not _get_venv_python():
+            self.after(0, self._log, "Auto-start skipped: no local venv found.\n")
+            return
+
+        self.after(0, self._log, "Starting local server automatically on launch…\n")
+        self.after(0, self._start_local)
+
     def _health_worker(self):
         while True:
             try:
@@ -961,44 +1071,220 @@ class WhisperUI(ctk.CTk):
         else:
             self._start_recording()
 
+    def _set_processing_state(self, active: bool):
+        with self._processing_lock:
+            if active:
+                self._processing_count += 1
+            else:
+                self._processing_count = max(0, self._processing_count - 1)
+            self._processing = self._processing_count > 0
+
     def _start_recording(self):
         self._recording = True
-        self._recording_data = sd.rec(
-            int(MAX_RECORD_SECONDS * SAMPLE_RATE),
+        self._recording_stream = None
+        self._recording_chunks = []
+        self._is_speaking = False
+        self._silence_frames = 0
+        self._speech_frames = 0
+
+        def callback(indata, _frames, _time_info, status):
+            if status:
+                log_msg = status.message if hasattr(status, "message") else str(status)
+                log = logging.getLogger("whisper-typer")
+                log.debug("Audio callback status: %s", log_msg)
+
+            if indata.size == 0:
+                return
+
+            with self._audio_lock:
+                if not self._recording:
+                    return
+
+                block = np.array(indata, copy=True)
+                max_amp = float(np.max(np.abs(block)))
+                silence_frames_to_flush = int(SILENCE_WINDOW_SECONDS * SAMPLE_RATE)
+                min_speech_frames = int(MIN_SPEECH_SECONDS * SAMPLE_RATE)
+
+                if self._is_live_mode():
+                    if max_amp >= SPEECH_THRESHOLD:
+                        self._recording_chunks.append(block)
+                        self._speech_frames += block.shape[0]
+                        self._silence_frames = 0
+                        self._is_speaking = True
+                        return
+
+                    if not self._is_speaking:
+                        # Ignore pure silence before the first spoken segment.
+                        return
+
+                    # Keep a little trailing audio to avoid clipping the end of words.
+                    self._recording_chunks.append(block)
+                    self._silence_frames += block.shape[0]
+                    if self._speech_frames >= min_speech_frames and self._silence_frames >= silence_frames_to_flush:
+                        segment = np.concatenate(self._recording_chunks, axis=0)
+                        self._recording_chunks = []
+                        self._is_speaking = False
+                        self._silence_frames = 0
+                        self._speech_frames = 0
+                        self._enqueue_transcription(segment, "append", False, auto_type=True)
+                else:
+                    # Recording mode: collect chunks until you manually stop.
+                    self._recording_chunks.append(block)
+                    if max_amp >= SPEECH_THRESHOLD:
+                        self._speech_frames += block.shape[0]
+                        self._is_speaking = True
+                        self._silence_frames = 0
+
+        self._recording_stream = sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
             dtype="float32",
+            blocksize=STREAM_BLOCK_SIZE,
+            callback=callback,
         )
+        self._recording_stream.start()
         self._btn_record.configure(
             text="⏹  Stop Recording",
             fg_color="#c0392b",
             hover_color="#a93226",
         )
         self._hdr_status.configure(text="🎤 Recording", text_color="#e74c3c")
-        self._set_tx_status("Recording… (Press Win+G to stop)", "#e74c3c")
+        if self._is_live_mode():
+            self._set_tx_status("Recording… Speak, then pause to auto-send.", "#e74c3c")
+        else:
+            self._set_tx_status("Recording… Speak, then stop to send.", "#e74c3c")
 
     def _stop_recording(self):
-        sd.stop()
-        recording = self._recording_data
+        if self._recording_stream:
+            self._recording_stream.stop()
+            self._recording_stream.close()
+            self._recording_stream = None
+
+        with self._audio_lock:
+            self._recording = False
+            recording_chunks = self._recording_chunks
+            self._recording_chunks = []
+            in_speech = self._is_speaking
+            self._is_speaking = False
+            self._silence_frames = 0
+            self._speech_frames = 0
+            sd.stop()
+            min_speech_frames = int(MIN_SPEECH_SECONDS * SAMPLE_RATE)
+            speech_frames = sum(chunk.shape[0] for chunk in recording_chunks)
+
+        if self._is_live_mode():
+            recording = np.concatenate(recording_chunks, axis=0) if speech_frames >= min_speech_frames else None
+        else:
+            recording = np.concatenate(recording_chunks, axis=0) if recording_chunks else None
         self._recording = False
-        self._recording_data = None
 
         self._processing = True
         self._btn_record.configure(state="disabled", text="Transcribing…")
         self._hdr_status.configure(text="⏳ Transcribing", text_color="#8e44ad")
         self._set_tx_status("Transcribing…", "#8e44ad")
 
-        threading.Thread(
-            target=self._transcribe_worker, args=(recording,), daemon=True
-        ).start()
+        if in_speech and recording is not None:
+            self._enqueue_transcription(recording, "replace", True, auto_type=True)
+        else:
+            self._processing = False
+            self._set_processing_state(False)
+            self._btn_record.configure(
+                state="normal",
+                text="⏺  Start Recording",
+                fg_color=self._btn_rec_fg,
+                hover_color=self._btn_rec_hover,
+            )
+            self._hdr_status.configure(text="✓ Ready", text_color="#27ae60")
+            self._set_tx_status("Ready. Press Win+G to start recording.", "gray55")
 
-    def _transcribe_worker(self, recording: np.ndarray):
-        audio = trim_trailing_silence(recording)
-        model = self._model_var.get()
-        text = send_to_server(audio, model)
-        self.after(0, self._show_result, text)
+    def _transcribe_worker(
+        self,
+        recording: np.ndarray,
+        mode: str = "replace",
+        stop_after: bool = False,
+        auto_type: bool = True,
+    ):
+        if recording is None or recording.size == 0:
+            if stop_after:
+                self.after(0, self._finish_after_transcription, auto_type)
+            return
 
-    def _show_result(self, text: str):
+        text = ""
+        try:
+            audio = trim_trailing_silence(recording)
+            model = self._model_var.get()
+            text = send_to_server(audio, model)
+        except Exception as e:
+            text = f"[Error: {e}]"
+
+        if stop_after:
+            self.after(0, self._show_result, text, auto_type)
+            return
+
+        if mode == "append":
+            self.after(0, self._append_result, text, auto_type)
+        else:
+            self.after(0, self._show_result, text, auto_type)
+
+    def _append_result(self, text: str, auto_type: bool = True):
+        text = text.strip()
+        if not text:
+            return
+        if text and not text.startswith("["):
+            self._add_history_entry(text, self._model_var.get())
+        self._textbox.configure(state="normal")
+        current = self._textbox.get("1.0", "end").strip()
+        if current and not current.endswith((" ", "\n")):
+            self._textbox.insert("end", " ")
+        self._textbox.insert("end", text)
+        self._textbox.configure(state="disabled")
+        if auto_type:
+            threading.Thread(target=self._auto_type_text, args=(text,), daemon=True).start()
+            if not self._recording:
+                self._set_tx_status("Done typing.", "gray55")
+        else:
+            self._set_tx_status("Transcription ready in output box.", "gray55")
+
+    def _finish_after_transcription(self, auto_type: bool = True):
+        self._btn_record.configure(
+            state="normal",
+            text="⏺  Start Recording",
+            fg_color=self._btn_rec_fg,
+            hover_color=self._btn_rec_hover,
+        )
+        self._hdr_status.configure(text="✓ Transcribed", text_color="#27ae60")
+        if auto_type:
+            self._set_tx_status("Done typing.", "gray55")
+        else:
+            self._set_tx_status("Ready. Press Win+G to start recording.", "gray55")
+        state = getattr(self, "_current_srv_state", "stopped")
+        self.after(0, lambda: self._set_srv_state(state))
+
+    def _transcription_queue_worker(self):
+        while True:
+            recording, mode, stop_after, auto_type = self._transcribe_queue.get()
+            try:
+                self._transcribe_worker(recording, mode, stop_after, auto_type)
+            finally:
+                self._set_processing_state(False)
+                self._transcribe_queue.task_done()
+
+    def _enqueue_transcription(
+        self,
+        recording: np.ndarray,
+        mode: str = "replace",
+        stop_after: bool = False,
+        auto_type: bool = True,
+    ):
+        if recording is None or recording.size == 0:
+            if stop_after:
+                self.after(0, self._finish_after_transcription, auto_type)
+            return
+
+        self._set_processing_state(True)
+        self._transcribe_queue.put((recording, mode, stop_after, auto_type))
+
+    def _show_result(self, text: str, auto_type: bool = True):
         text = text.strip()
         self._processing = False
         self._last_transcription = text
@@ -1017,14 +1303,18 @@ class WhisperUI(ctk.CTk):
             hover_color=self._btn_rec_hover,
         )
         self._hdr_status.configure(text="✓ Transcribed", text_color="#27ae60")
-        self._set_tx_status("Typing…", "#f39c12")
 
         def _type_and_restore():
-            self._auto_type_text(text)
+            if auto_type:
+                self._auto_type_text(text)
             # Restore header to show server status
             state = getattr(self, "_current_srv_state", "stopped")
             self.after(0, lambda: self._set_srv_state(state))
 
+        if auto_type:
+            self._set_tx_status("Typing…", "#f39c12")
+        else:
+            self._set_tx_status("Transcription ready in output box.", "#f39c12")
         threading.Thread(target=_type_and_restore, daemon=True).start()
 
     # ══════════════════════════════════════════════════════════════════════════

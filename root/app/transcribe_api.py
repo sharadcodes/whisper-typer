@@ -48,7 +48,7 @@ def trim_trailing_silence(audio: np.ndarray, threshold: float = 0.005) -> np.nda
     flat = audio.flatten()
     mask = np.abs(flat) > threshold
     if not np.any(mask):
-        return audio[: int(0.1 * SAMPLE_RATE)]
+        return np.empty(0, dtype=audio.dtype)
     last = np.where(mask)[0][-1]
     return flat[: last + 1]
 
@@ -75,6 +75,8 @@ async def transcribe(request: Request, model: str = DEFAULT_MODEL):
         audio_int16 = np.frombuffer(body, dtype=np.int16)
         audio_float = audio_int16.astype(np.float32) / 32767.0
         audio_float = trim_trailing_silence(audio_float)
+        if audio_float.size == 0:
+            return JSONResponse(content={"text": ""})
 
         whisper_model = get_model(model)
         segments, info = whisper_model.transcribe(audio_float, beam_size=1)
