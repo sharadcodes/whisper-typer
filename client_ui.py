@@ -1,6 +1,7 @@
 """Whisper Typer — UI client.
-Two tabs:
+Three tabs:
   • Transcribe — record audio, send to server, display result.
+  • History    — timestamped log of every transcription.
   • Server     — start/stop server (local or Docker), live log stream.
 """
 import json
@@ -13,6 +14,7 @@ import time
 import urllib.request
 import urllib.error
 import urllib.parse
+from datetime import datetime
 
 import numpy as np
 import sounddevice as sd
@@ -129,7 +131,10 @@ class WhisperUI(ctk.CTk):
         # recording state
         self._recording       = False
         self._recording_data: np.ndarray | None = None
-        self._last_transcription = ""  # Store the last result for auto-typing
+        self._last_transcription = ""
+
+        # transcript history: list of {"time": str, "model": str, "text": str}
+        self._history: list[dict] = []
 
         # server process handles
         self._local_proc: subprocess.Popen | None = None   # local uvicorn
@@ -169,9 +174,9 @@ class WhisperUI(ctk.CTk):
         ).grid(row=0, column=0, sticky="w")
 
         self._hdr_status = ctk.CTkLabel(
-            hdr, text="Ready",
-            font=ctk.CTkFont(size=12),
-            text_color="gray55",
+            hdr, text="● Server Offline",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#e74c3c",
         )
         self._hdr_status.grid(row=0, column=1, sticky="e")
 
@@ -180,9 +185,11 @@ class WhisperUI(ctk.CTk):
         self._tabs.grid(row=1, column=0, padx=16, pady=(10, 16), sticky="nsew")
 
         self._tab_t = self._tabs.add("  Transcribe  ")
+        self._tab_h = self._tabs.add("  History  ")
         self._tab_s = self._tabs.add("  Server  ")
 
         self._build_transcribe_tab()
+        self._build_history_tab()
         self._build_server_tab()
 
     # ── Transcribe tab ────────────────────────────────────────────────────────
@@ -237,52 +244,220 @@ class WhisperUI(ctk.CTk):
         )
         self._tx_status.grid(row=4, column=0, pady=(8, 0), sticky="w")
 
+    # ── History tab ────────────────────────────────────────────────────────────
+
+    def _build_history_tab(self):
+        tab = self._tab_h
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        # Header row: count badge + clear button
+        hdr = ctk.CTkFrame(tab, fg_color="transparent")
+        hdr.grid(row=0, column=0, pady=(8, 6), sticky="ew")
+        hdr.grid_columnconfigure(0, weight=1)
+
+        self._hist_count_label = ctk.CTkLabel(
+            hdr, text="0 transcriptions",
+            font=ctk.CTkFont(size=12),
+            text_color="gray55",
+        )
+        self._hist_count_label.grid(row=0, column=0, sticky="w")
+
+        ctk.CTkButton(
+            hdr, text="Clear All", width=80, height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="#c0392b", hover_color="#a93226",
+            command=self._clear_history,
+        ).grid(row=0, column=1, sticky="e")
+
+        # Scrollable area for history entries
+        self._hist_scroll = ctk.CTkScrollableFrame(
+            tab, corner_radius=8, fg_color="transparent",
+        )
+        self._hist_scroll.grid(row=1, column=0, sticky="nsew")
+        self._hist_scroll.grid_columnconfigure(0, weight=1)
+
+        # Empty-state label (shown when no history)
+        self._hist_empty = ctk.CTkLabel(
+            self._hist_scroll,
+            text="No transcriptions yet.\nRecord something to see it here.",
+            font=ctk.CTkFont(size=13),
+            text_color="gray45",
+            justify="center",
+        )
+        self._hist_empty.grid(row=0, column=0, pady=60)
+
+    def _add_history_entry(self, text: str, model: str):
+        """Append a transcription to history and update the UI."""
+        ts = datetime.now().strftime("%I:%M %p").lstrip("0")
+        date_str = datetime.now().strftime("%b %d")
+        entry = {"time": f"{date_str}, {ts}", "model": model, "text": text}
+        self._history.append(entry)
+
+        # Hide the empty-state label
+        self._hist_empty.grid_forget()
+
+        idx = len(self._history) - 1
+
+        card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
+        card.grid(row=idx, column=0, pady=(0, 8), sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+
+        # Top row: timestamp + model
+        meta = ctk.CTkFrame(card, fg_color="transparent")
+        meta.grid(row=0, column=0, padx=12, pady=(10, 0), sticky="ew")
+        meta.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            meta, text=entry["time"],
+            font=ctk.CTkFont(size=11),
+            text_color="gray55",
+        ).grid(row=0, column=0, sticky="w")
+
+        ctk.CTkLabel(
+            meta, text=model,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="gray50",
+            corner_radius=3,
+            fg_color="gray25",
+            padx=6,
+        ).grid(row=0, column=1, sticky="e")
+
+        # Transcription text
+        ctk.CTkLabel(
+            card, text=text,
+            font=ctk.CTkFont(size=13),
+            wraplength=380,
+            justify="left",
+            anchor="w",
+        ).grid(row=1, column=0, padx=12, pady=(6, 4), sticky="ew")
+
+        # Copy button
+        def _copy(t=text):
+            self.clipboard_clear()
+            self.clipboard_append(t)
+            self._set_tx_status("Copied to clipboard.", "gray55")
+
+        ctk.CTkButton(
+            card, text="Copy", width=60, height=24,
+            font=ctk.CTkFont(size=11),
+            fg_color="gray30", hover_color="gray25",
+            command=_copy,
+        ).grid(row=2, column=0, padx=12, pady=(2, 10), sticky="w")
+
+        # Update counter
+        n = len(self._history)
+        self._hist_count_label.configure(
+            text=f"{n} transcription{'s' if n != 1 else ''}"
+        )
+
+        # Scroll to bottom
+        self._hist_scroll._parent_canvas.yview_moveto(1.0)
+
+    def _clear_history(self):
+        """Remove all history entries."""
+        self._history.clear()
+        for widget in self._hist_scroll.winfo_children():
+            widget.destroy()
+
+        self._hist_empty = ctk.CTkLabel(
+            self._hist_scroll,
+            text="No transcriptions yet.\nRecord something to see it here.",
+            font=ctk.CTkFont(size=13),
+            text_color="gray45",
+            justify="center",
+        )
+        self._hist_empty.grid(row=0, column=0, pady=60)
+        self._hist_count_label.configure(text="0 transcriptions")
+
     # ── Server tab ────────────────────────────────────────────────────────────
 
     def _build_server_tab(self):
         tab = self._tab_s
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1) # Adjusted row count
+        tab.grid_rowconfigure(3, weight=1)
 
-        # Status + control card
+        # ── Status card ──────────────────────────────────────────────────
         card = ctk.CTkFrame(tab, corner_radius=10)
         card.grid(row=0, column=0, pady=(8, 8), sticky="ew")
-        card.grid_columnconfigure(0, weight=1)
+        card.grid_columnconfigure(1, weight=1)
+
+        # Colored status bar (left edge indicator)
+        self._srv_status_bar = ctk.CTkFrame(card, width=6, corner_radius=3, fg_color="gray50")
+        self._srv_status_bar.grid(row=0, column=0, rowspan=3, padx=(8, 0), pady=10, sticky="ns")
+
+        # Status title row
+        status_top = ctk.CTkFrame(card, fg_color="transparent")
+        status_top.grid(row=0, column=1, padx=(12, 16), pady=(12, 0), sticky="ew")
+        status_top.grid_columnconfigure(0, weight=1)
 
         self._srv_status_label = ctk.CTkLabel(
-            card, text="● Checking…",
-            font=ctk.CTkFont(size=14, weight="bold"),
+            status_top, text="Checking…",
+            font=ctk.CTkFont(size=15, weight="bold"),
             text_color="gray50",
         )
-        self._srv_status_label.grid(row=0, column=0, padx=16, pady=(14, 6), sticky="w")
+        self._srv_status_label.grid(row=0, column=0, sticky="w")
 
+        self._srv_status_badge = ctk.CTkLabel(
+            status_top, text="  OFFLINE  ",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            corner_radius=4,
+            fg_color="gray35",
+            text_color="gray70",
+        )
+        self._srv_status_badge.grid(row=0, column=1, sticky="e")
+
+        # Info row (URL + model)
+        info_row = ctk.CTkFrame(card, fg_color="transparent")
+        info_row.grid(row=1, column=1, padx=(12, 16), pady=(4, 0), sticky="ew")
+
+        self._srv_url_label = ctk.CTkLabel(
+            info_row,
+            text=f"http://{SERVER_IP}:{SERVER_PORT}",
+            font=ctk.CTkFont(family="Courier New", size=11),
+            text_color="gray55",
+        )
+        self._srv_url_label.pack(side="left")
+
+        self._srv_model_label = ctk.CTkLabel(
+            info_row,
+            text="model: small",
+            font=ctk.CTkFont(size=11),
+            text_color="gray55",
+        )
+        self._srv_model_label.pack(side="right")
+
+        # Control buttons
         btn_row = ctk.CTkFrame(card, fg_color="transparent")
-        btn_row.grid(row=1, column=0, padx=12, pady=(0, 14), sticky="ew")
+        btn_row.grid(row=2, column=1, padx=(8, 12), pady=(8, 12), sticky="ew")
 
         self._btn_start_local = ctk.CTkButton(
-            btn_row, text="Start Local", width=120,
+            btn_row, text="▶  Start Local", width=130, height=32,
+            font=ctk.CTkFont(size=12),
             command=self._start_local,
         )
-        self._btn_start_local.pack(side="left", padx=(0, 8))
+        self._btn_start_local.pack(side="left", padx=(0, 6))
 
         self._btn_start_docker = ctk.CTkButton(
-            btn_row, text="Start Docker", width=120,
+            btn_row, text="🐳  Start Docker", width=140, height=32,
+            font=ctk.CTkFont(size=12),
             fg_color="#1a6b3a", hover_color="#145530",
             command=self._start_docker,
         )
-        # Only show Docker button if docker command is available
         if shutil.which("docker"):
-            self._btn_start_docker.pack(side="left", padx=(0, 8))
+            self._btn_start_docker.pack(side="left", padx=(0, 6))
 
         self._btn_stop_srv = ctk.CTkButton(
-            btn_row, text="Stop", width=80,
+            btn_row, text="Stop", width=70, height=32,
+            font=ctk.CTkFont(size=12),
             fg_color="gray35", hover_color="gray28",
             command=self._stop_server,
         )
-        self._btn_stop_srv.pack(side="left", padx=(0, 8))
+        self._btn_stop_srv.pack(side="left", padx=(0, 6))
 
         self._btn_kill_srv = ctk.CTkButton(
-            btn_row, text="Force Kill", width=100,
+            btn_row, text="Force Kill", width=90, height=32,
+            font=ctk.CTkFont(size=12),
             fg_color="#c0392b", hover_color="#a93226",
             command=self._kill_server,
         )
@@ -589,16 +764,21 @@ class WhisperUI(ctk.CTk):
                     f"http://{SERVER_IP}:{SERVER_PORT}/", timeout=2
                 ) as r:
                     running = r.status == 200
+                    body = json.loads(r.read().decode()) if running else {}
             except Exception:
                 running = False
+                body = {}
 
-            self.after(0, self._on_health_result, running)
+            self.after(0, self._on_health_result, running, body)
             time.sleep(HEALTH_POLL_SEC)
 
-    def _on_health_result(self, running: bool):
-        if running != self._server_running:
-            self._server_running = running
+    def _on_health_result(self, running: bool, body: dict | None = None):
+        changed = running != self._server_running
+        self._server_running = running
+        if changed:
             self._set_srv_state("running" if running else "stopped")
+        if running and hasattr(self, "_srv_url_label"):
+            self._srv_url_label.configure(text_color="gray70" if running else "gray45")
 
     # ══════════════════════════════════════════════════════════════════════════
     # FOCUS TRACKING
@@ -789,33 +969,80 @@ class WhisperUI(ctk.CTk):
         self._textbox.insert("1.0", text)
         self._textbox.configure(state="disabled")
 
+        if text and not text.startswith("["):
+            self._add_history_entry(text, self._model_var.get())
+
         self._btn_record.configure(
             state="normal",
             text="⏺  Start Recording",
             fg_color=self._btn_rec_fg,
             hover_color=self._btn_rec_hover,
         )
-        self._hdr_status.configure(text="✓ Done", text_color="#27ae60")
+        self._hdr_status.configure(text="✓ Transcribed", text_color="#27ae60")
         self._set_tx_status("Typing…", "#f39c12")
-        
-        # Auto-type the result in a background thread
-        threading.Thread(target=self._auto_type_text, args=(text,), daemon=True).start()
+
+        def _type_and_restore():
+            self._auto_type_text(text)
+            # Restore header to show server status
+            state = getattr(self, "_current_srv_state", "stopped")
+            self.after(0, lambda: self._set_srv_state(state))
+
+        threading.Thread(target=_type_and_restore, daemon=True).start()
 
     # ══════════════════════════════════════════════════════════════════════════
     # HELPERS
     # ══════════════════════════════════════════════════════════════════════════
 
     def _set_srv_state(self, state: str):
-        """state: 'running' | 'stopped' | 'starting' (server status for Server tab only)"""
+        """state: 'running' | 'stopped' | 'starting'
+        Updates: Server tab card, header badge, and tray icon/tooltip.
+        """
+        self._current_srv_state = state
+
         cfg = {
-            "running":  ("● Running",   "#27ae60"),
-            "stopped":  ("● Stopped",   "#e74c3c"),
-            "starting": ("◌ Starting…", "#f39c12"),
+            "running": {
+                "title": "Server Running",
+                "color": "#27ae60",
+                "badge": "  ONLINE  ",
+                "badge_fg": "#1b7a3d",
+                "badge_text": "#d4f5e0",
+                "hdr": "● Server Online",
+            },
+            "stopped": {
+                "title": "Server Stopped",
+                "color": "#e74c3c",
+                "badge": "  OFFLINE  ",
+                "badge_fg": "#7a1b1b",
+                "badge_text": "#f5d4d4",
+                "hdr": "● Server Offline",
+            },
+            "starting": {
+                "title": "Server Starting…",
+                "color": "#f39c12",
+                "badge": "  STARTING  ",
+                "badge_fg": "#7a5c0b",
+                "badge_text": "#f5ecd4",
+                "hdr": "◌ Server Starting…",
+            },
         }
-        text, color = cfg.get(state, ("● Unknown", "gray50"))
-        # Only update Server tab status, not header
-        if hasattr(self, '_srv_status_label'):
-            self._srv_status_label.configure(text=text, text_color=color)
+        c = cfg.get(state, cfg["stopped"])
+
+        # Server tab card
+        if hasattr(self, "_srv_status_label"):
+            self._srv_status_label.configure(text=c["title"], text_color=c["color"])
+        if hasattr(self, "_srv_status_bar"):
+            self._srv_status_bar.configure(fg_color=c["color"])
+        if hasattr(self, "_srv_status_badge"):
+            self._srv_status_badge.configure(
+                text=c["badge"], fg_color=c["badge_fg"], text_color=c["badge_text"],
+            )
+        if hasattr(self, "_srv_model_label"):
+            model = self._model_var.get() if hasattr(self, "_model_var") else "small"
+            self._srv_model_label.configure(text=f"model: {model}")
+
+        # Header badge (only if not mid-recording/transcribing)
+        if hasattr(self, "_hdr_status") and not self._recording:
+            self._hdr_status.configure(text=c["hdr"], text_color=c["color"])
 
     def _log(self, text: str):
         self._log_box.configure(state="normal")
@@ -873,23 +1100,26 @@ class WhisperUI(ctk.CTk):
             self._set_tx_status(f"Tray error: {e}", "#e74c3c")
 
     def _update_tray_icon(self):
-        """Update tray icon to reflect current transcription status."""
+        """Update tray icon to reflect server + recording status."""
         if not hasattr(self, '_tray_icon') or not self._tray_icon:
             self.after(1000, self._update_tray_icon)
             return
-        
-        # Determine status based on transcription state only
+
         if self._recording:
             status = "recording"
-            title = "🎤 Recording"
-        elif self._last_transcription:
+            title = "Whisper Typer — Recording…"
+        elif self._server_running:
             status = "running"
-            title = f"✓ {self._last_transcription[:20]}..."
+            title = "Whisper Typer — Server Online"
         else:
-            status = "stopped"
-            title = "Ready to record"
-        
-        # Update if changed
+            srv_state = getattr(self, "_current_srv_state", "stopped")
+            if srv_state == "starting":
+                status = "starting"
+                title = "Whisper Typer — Server Starting…"
+            else:
+                status = "stopped"
+                title = "Whisper Typer — Server Offline"
+
         if status != self._tray_status or self._recording != self._tray_recording:
             try:
                 self._tray_status = status
@@ -898,7 +1128,7 @@ class WhisperUI(ctk.CTk):
                 self._tray_icon.title = title
             except Exception:
                 pass
-        
+
         self.after(500, self._update_tray_icon)
 
     def _on_close(self):

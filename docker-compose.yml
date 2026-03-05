@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+        - WHISPER_MODEL=${WHISPER_MODEL:-small}
       secrets:
         - hf_token
     container_name: faster-whisper
@@ -12,7 +12,7 @@ services:
       - .env
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
-      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+      - WHISPER_MODEL=${WHISPER_MODEL:-small}
     volumes:
       - ./models:/config # Mount local models directory into container
     ports:

@@ -9,7 +9,7 @@ LABEL build_version="${VERSION}" build_date="${BUILD_DATE}"
 ENV DEBIAN_FRONTEND="noninteractive" \
     TMPDIR="/run/whisper-temp"
 
-ARG WHISPER_MODEL=tiny
+ARG WHISPER_MODEL=small
 
 RUN mkdir -p /run/whisper-temp && \
     apt-get update && \

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16000
-DEFAULT_MODEL = os.environ.get("WHISPER_MODEL", "tiny")
+DEFAULT_MODEL = os.environ.get("WHISPER_MODEL", "small")
 _MODELS_DIR_DEFAULT = (
     "/config"
     if os.path.isdir("/config")
