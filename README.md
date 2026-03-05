@@ -79,6 +79,15 @@ The client runs a global hotkey listener:
 - **Win+G** — Toggle recording.
 - When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
 
+### Status icon colors
+
+The system tray status icon uses the following colors:
+
+- **Running**: 🟢 green
+- **Stopped**: 🔴 red
+- **Recording**: 🟠 amber
+- **Starting**: 🔵 blue
+
 ---
 
 ## Requirements
