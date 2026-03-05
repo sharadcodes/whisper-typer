@@ -1188,12 +1188,10 @@ class WhisperUI(ctk.CTk):
             recording = np.concatenate(recording_chunks, axis=0) if recording_chunks else None
         self._recording = False
 
-        self._processing = True
-        self._btn_record.configure(state="disabled", text="Transcribing…")
-        self._hdr_status.configure(text="⏳ Transcribing", text_color="#8e44ad")
-        self._set_tx_status("Transcribing…", "#8e44ad")
-
         if in_speech and recording is not None:
+            self._enqueue_transcription(recording, "replace" if not self._is_live_mode() else "append", True, auto_type=True)
+        elif not self._is_live_mode() and recording is not None:
+            # In batch mode, send whatever we have even if we weren't "in speech" at the exact moment of stopping
             self._enqueue_transcription(recording, "replace", True, auto_type=True)
         else:
             self._processing = False
