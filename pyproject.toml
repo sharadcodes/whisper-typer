@@ -1,0 +1,12 @@
+[project]
+name = "whisper-typer"
+version = "0.1.0"
+description = "Push-to-talk voice transcription using Faster-Whisper"
+requires-python = ">=3.10"
+dependencies = [
+    "sounddevice",
+    "numpy",
+    "pystray",
+    "pillow",
+    "pynput",
+]

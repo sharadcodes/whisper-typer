@@ -3,11 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
+      secrets:
+        - hf_token
     container_name: faster-whisper
+    env_file:
+      - .env
     environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Etc/UTC
+      - HF_TOKEN=${HF_TOKEN:-}
+      - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
     volumes:
       - whisper_data:/config # Persistent storage for models inside Docker
     ports:
@@ -16,3 +21,7 @@ services:
 
 volumes:
   whisper_data:
+
+secrets:
+  hf_token:
+    environment: HF_TOKEN
