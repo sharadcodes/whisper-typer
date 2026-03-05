@@ -103,6 +103,24 @@ class WhisperManager:
 
         def run_srv():
             server_dir = str(SERVER_DIR)
+            
+            # Load environment variables from .env if it exists in project root
+            # Project root is one level up from PACKAGE_DIR (whisper_typer/)
+            project_root = SERVER_DIR.parent.parent
+            env_vars = os.environ.copy()
+            env_path = project_root / ".env"
+            
+            if env_path.exists():
+                try:
+                    with open(env_path, "r") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#") and "=" in line:
+                                k, v = line.split("=", 1)
+                                env_vars[k.strip()] = v.strip()
+                except Exception as e:
+                    self.log_callback(f"Warning: Failed to read .env file: {e}\n")
+
             self.log_callback(f"Starting local server with {python}…\n")
 
             try:
@@ -121,7 +139,7 @@ class WhisperManager:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
-                    env=os.environ.copy(),
+                    env=env_vars,
                     creationflags=creation_flags
                 )
                 self._stream_logs(self.local_proc)
