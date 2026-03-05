@@ -32,17 +32,18 @@ Supports Windows, macOS, and Linux.
 ## Flow logic
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": false}} }%%
 flowchart TD
-    A["User Hotkey<br/>Win+G"] --> B["Audio Input Stream"]
+    A["User Hotkey\nWin+G"] --> B["Audio Input Stream"]
     B --> C{"Input Mode"}
     C -->|Live typing| D["Silence-based Chunking"]
     C -->|Recording only| E["Full Recording Capture"]
-    D --> F["Transcription Queue<br/>FIFO"]
+    D --> F["Transcription Queue\nFIFO"]
     E --> F
-    F --> G["Server API<br/>Transcribe"]
+    F --> G["Server API\nTranscribe"]
     G --> H["Transcription Service"]
     H --> I["Text Output"]
-    I --> J["Keyboard Typing<br/>to Active Window"]
+    I --> J["Keyboard Typing\nto Active Window"]
 ```
 
 - User presses `Win+G` to toggle recording.
