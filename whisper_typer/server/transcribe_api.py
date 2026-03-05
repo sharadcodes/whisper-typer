@@ -1,5 +1,6 @@
-"""FastAPI server — POST /transcribe with raw PCM (16kHz, 16-bit, mono).
-Runs inside Docker (download_root=/config) or locally (download_root=<project>/models).
+"""FastAPI service exposing /transcribe for raw PCM audio.
+Model files are cached at WHISPER_MODELS_DIR, defaulting to /config in Docker-style
+layouts (when present) or ~/.whisper-typer/models for local runs.
 """
 import os
 import logging
