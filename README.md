@@ -85,8 +85,12 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 The client runs a global hotkey listener:
 
-- **Win+G** — Toggle recording.
+- **Win+G** (Windows) or **Cmd+G** (macOS) — Toggle recording.
 - When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
+
+> **macOS Users:** 
+> 1. You must grant **Accessibility** permissions to your terminal (e.g., iTerm or Terminal.app) for the auto-typing to work.
+> 2. Grant **Microphone** permissions when prompted.
 
 ### System tray icon colors
 

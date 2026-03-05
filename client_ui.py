@@ -109,11 +109,20 @@ def send_to_server(audio: np.ndarray, model: str) -> str:
             headers={"Content-Type": "application/octet-stream"},
         )
         with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read().decode()).get("text", "")
+            data = json.loads(resp.read().decode())
+            return data.get("text", "")
+    except urllib.error.HTTPError as e:
+        try:
+            error_detail = json.loads(e.read().decode()).get("detail", str(e))
+        except Exception:
+            error_detail = str(e)
+        return f"[Server Error {e.code}: {error_detail}]"
     except urllib.error.URLError as e:
-        return f"[Server unreachable — start it in the Server tab. {e}]"
+        return f"[Connection Error: {e.reason}. Is the server running?]"
+    except TimeoutError:
+        return "[Request timed out. The model might be taking too long or the server is hanging.]"
     except Exception as e:
-        return f"[Error: {e}]"
+        return f"[Unexpected Client Error: {e}]"
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -759,7 +768,7 @@ class WhisperUI(ctk.CTk):
         if self._docker_log_proc and self._docker_log_proc.poll() is None:
             try:
                 self._docker_log_proc.kill()
-            except:
+            except Exception:
                 pass
             self._docker_log_proc = None
 
@@ -864,7 +873,8 @@ class WhisperUI(ctk.CTk):
             # Update status after typing completes
             self.after(0, lambda: self._set_tx_status("Done typing.", "gray55"))
         except Exception as e:
-            self.after(0, lambda: self._set_tx_status(f"Error typing: {e}", "#e74c3c"))
+            msg = f"Error typing: {e}"
+            self.after(0, lambda m=msg: self._set_tx_status(m, "#e74c3c"))
 
     # ══════════════════════════════════════════════════════════════════════════
     # MODEL DOWNLOAD
@@ -1089,10 +1099,7 @@ class WhisperUI(ctk.CTk):
         self._tx_status.configure(text=message, text_color=color)
 
     def _setup_tray(self):
-        """Set up system tray icon on Windows."""
-        if sys.platform != "win32":
-            return
-        
+        """Set up system tray icon for all platforms."""
         try:
             from pystray import Icon, Menu, MenuItem
             
@@ -1112,7 +1119,7 @@ class WhisperUI(ctk.CTk):
                 self._on_close()
             
             menu = Menu(
-                MenuItem("Record (Win+G)", tray_toggle_record),
+                MenuItem("Toggle Recording", tray_toggle_record),
                 MenuItem("Show Window", tray_show),
                 MenuItem("Quit", tray_quit),
             )
@@ -1171,7 +1178,7 @@ class WhisperUI(ctk.CTk):
         if hasattr(self, '_tray_icon') and self._tray_icon:
             try:
                 self._tray_icon.stop()
-            except:
+            except Exception:
                 pass
         self.destroy()
 
