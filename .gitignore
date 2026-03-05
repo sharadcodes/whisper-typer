@@ -1,2 +1,3 @@
 .env
 models/
+**/*/_pycache_/

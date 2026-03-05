@@ -358,7 +358,7 @@ class WhisperUI(ctk.CTk):
             if install.returncode != 0:
                 output = (install.stdout + install.stderr).strip() or "(no output)"
                 self._log(f"Failed to install dependencies with uv:\n{output}\n")
-                self._log("Run setup-transcribe-local.ps1/.sh for a full install.\n")
+                self._log("Please run 'uv venv' to create a virtual environment.\n")
                 return False
             self._log("Local dependency install complete.\n")
             return True
@@ -368,7 +368,7 @@ class WhisperUI(ctk.CTk):
         if pip_bootstrap.returncode != 0:
             output = (pip_bootstrap.stdout + pip_bootstrap.stderr).strip() or "(no output)"
             self._log(f"Failed to initialize pip:\n{output}\n")
-            self._log("Install uv and add it to PATH, or run setup-transcribe-local.ps1/.sh.\n")
+            self._log("Install uv and add it to PATH.\n")
             return False
 
         install = subprocess.run([python, "-m", "pip", "install", *missing], capture_output=True, text=True)
@@ -392,7 +392,7 @@ class WhisperUI(ctk.CTk):
 
         python = _get_venv_python()
         if not python:
-            self._log("No venv found. Run setup-transcribe-local.ps1 (or .sh) first to create .venv and install deps.\n")
+            self._log("No venv found. Please run 'uv run client_ui.py' to automatically create one and install deps.\n")
             return
 
         self._set_srv_state("starting")

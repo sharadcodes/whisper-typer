@@ -1,158 +1,105 @@
 # Whisper Typer
 
-Push-to-talk voice transcription using Faster-Whisper. System tray app + hotkey; supports Windows, macOS, and Linux.
+Push-to-talk voice transcription using Faster-Whisper. Supports Windows, macOS, and Linux.
 
 ## Quick start
 
-1. **Start the transcribe server** (Docker):
+1. **Run the client**:
 
    ```powershell
-   # Windows
-   .\start-transcribe-docker.ps1
+   uv run client_ui.py
    ```
 
-   ```sh
-   # macOS / Linux
-   chmod +x start-transcribe-docker.sh && ./start-transcribe-docker.sh
-   ```
+   `uv` creates the virtual environment and installs dependencies automatically.
 
-   On Windows: uses WSL when available (for GPU). On Linux: detects GPU. Use `-NoWsl` to force CPU on Windows.
+2. **Start the server (via UI)**:
+   - Go to the **Server** tab.
+   - Click **Start Local** (installs server dependencies automatically into the venv if needed).
+   - *Alternative:* Click **Start Docker** to run it in a container.
 
-2. **Run the client**:
-
-   ```powershell
-   uv run client.py
-   ```
-
-   `uv` creates venv and installs dependencies automatically.
-
-3. **Use it** — tray icon appears. Press **Alt+PageUp** to record, press again to stop and transcribe. Text is typed into the focused field.
+3. **Use it**:
+   - Go to the **Transcribe** tab (or minimize the app and use the system tray).
+   - Press **Win+G** to start recording.
+   - Press **Win+G** again to stop, transcribe, and **automatically type** the text into whatever window you were focused on.
 
 ---
 
-## Scripts
+## Architecture
 
-| Script / File | Purpose |
-|-------|---------|
-| `start-transcribe-docker.ps1` / `start-transcribe-docker.sh` | Start transcribe server in Docker. |
-| `start-transcribe-local.ps1` / `start-transcribe-local.sh` | Start transcribe server locally (no Docker). Run `setup-transcribe-local` first. |
-| `setup-transcribe-local.ps1` / `setup-transcribe-local.sh` | One-time setup: venv, deps, model download. For running without Docker. |
-| `client.py` | Tray + hotkey client — records on Alt+PageUp and auto-types the result. |
-| `client_ui.py` | Window UI client — record button, shows transcription, copy/clear, and server management (start/stop/logs). |
+This project consists of two parts running together:
+1. **Client** (`client_ui.py` / `client.py`): The UI, hotkey listener, and audio recorder.
+2. **Server** (`root/app/transcribe_api.py`): A FastAPI server running `faster-whisper`.
+
+You can run both locally using `uv`, or run the server in Docker while running the client locally.
 
 ---
 
 ## Run (detailed)
 
-### 1. Start the Faster-Whisper server (Docker)
-
-**Helper script** (recommended):
-
-```powershell
-# Windows
-.\start-transcribe-docker.ps1
-```
-
-```sh
-# macOS / Linux
-./start-transcribe-docker.sh
-```
-
-**Local (no Docker):**
-
-```powershell
-# Windows — run setup-transcribe-local.ps1 first
-.\start-transcribe-local.ps1
-```
-
-```sh
-# macOS / Linux — run setup-transcribe-local.sh first
-chmod +x start-transcribe-local.sh && ./start-transcribe-local.sh
-```
-
-**Manual Docker:**
-
-```powershell
-docker compose up -d --build
-```
-
-**NVIDIA GPU on Linux** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
-
-```powershell
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
-```
-
-**NVIDIA GPU on Windows (WSL2):** `start-transcribe-docker.ps1` auto-uses WSL when available. One-time setup: install [NVIDIA Container Toolkit in WSL2](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html#installing-on-ubuntu-and-debian). Use `.\start-transcribe-docker.ps1 -NoWsl` to force CPU mode.
-
-Logs: `docker compose logs -f faster-whisper`
-
-### 2. Run the client
-
-**Tray + hotkey client** (Alt+PageUp to record, auto-types result):
-
-```powershell
-uv run client.py
-```
-
-**Window UI client** (record button, shows text, copy/clear, and server management — no hotkeys):
+### 1. Run the client UI
 
 ```powershell
 uv run client_ui.py
 ```
 
-`client_ui.py` has a "Server" tab that lets you:
-- **Start Local**: Automatically finds the `.venv` and installs dependencies if needed.
-- **Start Docker**: Runs `docker compose up -d --build`.
-- **View Logs**: See real-time server output (local or container logs).
-- **Health indicator**: A status dot (top-right) shows if the server is currently reachable.
+`client_ui.py` is a complete dashboard that lets you:
+- **Transcribe**: Pick a model (tiny, base, small, medium, large-v3) and record.
+- **Manage Server**: 
+  - **Start Local**: Automatically installs dependencies (`fastapi`, `faster-whisper`, etc.) and runs the server.
+  - **Start Docker**: Runs `docker compose up -d`.
+  - **Model Manager**: Pre-download or delete models to save space.
+- **View Logs**: See real-time server output.
 
-Or with standard Python (after `uv venv` and `uv pip install .`):
+### 2. Manual Server Setup (Optional)
 
+If you prefer not to use the UI's server management:
+
+**Manual Local Server:**
 ```powershell
-.venv\Scripts\Activate.ps1   # Windows
-python client.py       # or: python client_ui.py
+uv pip install fastapi uvicorn python-multipart faster-whisper numpy
+uv run uvicorn root.app.transcribe_api:app --host 127.0.0.1 --port 8000
 ```
 
-```sh
-source .venv/bin/activate     # macOS / Linux
-python client.py       # or: python client_ui.py
+**Manual Docker:**
+```powershell
+docker compose up -d
 ```
 
-On first run of `client.py` you pick a model (1–5) at the CLI; then the tray starts. `client_ui.py` has a model selector in the window.
+**NVIDIA GPU on Linux** (requires [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)):
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
 
-### 3. Use the system tray or keyboard shortcut
+---
 
-- **Blue** — ready
-- **Red** — recording
-- **Amber** — transcribing
+## Hotkeys & Auto-typing
 
-**Alt+PageUp** — toggle recording. Or left-click the tray icon (or right-click → Record / Stop).
+The client runs a global hotkey listener:
 
-When done, the transcription is **automatically typed** into the focused input field. A toast notification shows the result.
+- **Win+G** — Toggle recording.
+- When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
 
 ---
 
 ## Requirements
 
 - **OS:** Windows, macOS, or Linux
-- **Python:** 3.x
-- **Package manager:** `uv` (recommended) or `pip`
-- **Dependencies:** sounddevice, numpy, pystray, pillow, pynput
-- **Docker:** for the faster-whisper backend (Windows, macOS including Apple Silicon M1–M4, Linux)
+- **Python:** 3.10+
+- **Package manager:** `uv` (recommended)
+- **Docker:** Optional, for isolated container deployment
 
 ---
 
 ## Config
 
-- **Server:** In `client.py`, `SERVER_IP` / `SERVER_PORT` (default `127.0.0.1:8000`)
-- **Model:** Chosen at app startup (CLI prompt 1–5)
-- **GPU:** Linux: `docker-compose.gpu.yml` + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). Windows: `start-transcribe-docker.ps1` uses WSL when available; install toolkit in WSL2.
+- **.env file**: Create a `.env` file from `.env.example` to set the default `WHISPER_MODEL` or provide an `HF_TOKEN` for faster downloads.
+- **Server address:** Configured in `client_ui.py` (`SERVER_IP` / `SERVER_PORT` — default `127.0.0.1:8000`).
 
 ---
 
 ## API
 
-The Docker container runs a **FastAPI** server on port **8000**:
+The server exposes a **FastAPI** endpoint on port **8000**:
 
-- **GET /** — service info
-- **POST /transcribe?model=tiny** — upload raw PCM audio (16 kHz, 16-bit, mono); returns `{"text": "..."}`
+- **GET /** — health check and service info
+- **POST /transcribe?model=small** — upload raw PCM audio (16 kHz, 16-bit, mono); returns `{"text": "..."}`
