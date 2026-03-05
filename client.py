@@ -133,8 +133,21 @@ ICON_WORKING   = _make_icon("#8e44ad")   # purple — transcribing
 
 class State:
     is_recording: bool = False
-    recording_array: np.ndarray | None = None
+    input_stream: sd.InputStream | None = None
+    recording_chunks: list[np.ndarray] = []
+    is_speaking: bool = False
+    silence_frames: int = 0
+    speech_frames: int = 0
+    transcribe_guard: threading.Lock = threading.Lock()
     icon: pystray.Icon | None = None
+
+    # Audio processing constants
+    # 1.0 seconds of silence triggers transcription. Adjust if you want a shorter/longer pause window.
+    silence_seconds: float = 1.5
+    speech_threshold: float = 0.01
+    min_speech_seconds: float = 0.2
+    stream_block_size: int = 512
+    audio_lock: threading.Lock = threading.Lock()
 
 
 _state = State()
@@ -145,29 +158,96 @@ _state = State()
 def _start_recording(icon: pystray.Icon) -> None:
     log.info("▶ Recording started (stop with hotkey)")
     _state.is_recording    = True
-    _state.recording_array = sd.rec(
-        int(MAX_RECORD_SECONDS * SAMPLE_RATE),
+    _state.recording_chunks = []
+    _state.is_speaking     = False
+    _state.silence_frames  = 0
+    _state.speech_frames   = 0
+
+    def audio_callback(indata, frames, _time_info, status):
+        if status:
+            log.debug("Audio callback status: %s", status)
+        with _state.audio_lock:
+            if not _state.is_recording:
+                return
+
+            block = np.array(indata, copy=True)
+            if block.size == 0:
+                return
+            max_amp = float(np.max(np.abs(block)))
+            max_speech_frames = int(_state.silence_seconds * SAMPLE_RATE)
+            min_speech_frames = int(_state.min_speech_seconds * SAMPLE_RATE)
+
+            if max_amp >= _state.speech_threshold:
+                _state.recording_chunks.append(block)
+                _state.speech_frames += frames
+                _state.silence_frames = 0
+                _state.is_speaking = True
+                return
+
+            if not _state.is_speaking:
+                # Ignore leading/trailing silence while not in an active segment.
+                return
+
+            # Keep a small amount of trailing silence so cutoffs are not clipped.
+            _state.recording_chunks.append(block)
+            _state.silence_frames += frames
+            if _state.speech_frames >= min_speech_frames and _state.silence_frames >= max_speech_frames:
+                # finalize one speech segment and queue it for transcription
+                segment = np.concatenate(_state.recording_chunks, axis=0).reshape(-1, 1).astype(np.float32)
+                _state.recording_chunks = []
+                _state.is_speaking = False
+                _state.silence_frames = 0
+                _state.speech_frames = 0
+
+                def worker(audio_segment: np.ndarray):
+                    with _state.transcribe_guard:
+                        text = transcribe(audio_segment)
+                        if text:
+                            type_text(text + " ")
+
+                threading.Thread(target=worker, args=(segment,), daemon=True).start()
+
+    _state.input_stream = sd.InputStream(
         samplerate=SAMPLE_RATE,
         channels=1,
         dtype="float32",
+        blocksize=_state.stream_block_size,
+        callback=audio_callback,
     )
+    _state.input_stream.start()
     icon.icon  = ICON_RECORDING
     icon.title = "Whisper Typer — recording…"
 
 
 def _stop_and_transcribe(icon: pystray.Icon) -> None:
     log.info("■ Recording stopped, transcribing…")
-    sd.stop()
-    recording = _state.recording_array
-    _state.is_recording    = False
-    _state.recording_array = None
+    with _state.audio_lock:
+        _state.is_recording = False
+        if _state.input_stream:
+            _state.input_stream.stop()
+            _state.input_stream.close()
+        _state.input_stream = None
+        chunks = _state.recording_chunks
+        _state.recording_chunks = []
+        _state.is_speaking = False
+        _state.silence_frames = 0
+        _state.speech_frames = 0
 
+    recording = np.concatenate(chunks, axis=0).reshape(-1, 1).astype(np.float32) if chunks else None
+    sd.stop()
+    _state.is_recording    = False
     icon.icon  = ICON_WORKING
     icon.title = "Whisper Typer — transcribing…"
 
     def worker():
-        text = transcribe(recording)
-        type_text(text)
+        if recording is not None:
+            if not np.any(np.abs(recording) >= _state.speech_threshold):
+                log.debug("No speech in final segment; skipping transcription.")
+            else:
+                with _state.transcribe_guard:
+                    text = transcribe(recording)
+                    if text:
+                        type_text(text)
         icon.icon  = ICON_IDLE
         icon.title = "Whisper Typer — Alt+PageUp to record"
         log.info("✓ Done")
