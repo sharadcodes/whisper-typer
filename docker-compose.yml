@@ -14,13 +14,10 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - WHISPER_MODEL=${WHISPER_MODEL:-tiny}
     volumes:
-      - whisper_data:/config # Persistent storage for models inside Docker
+      - ./models:/config # Mount local models directory into container
     ports:
       - 8000:8000   # FastAPI /transcribe
     restart: unless-stopped
-
-volumes:
-  whisper_data:
 
 secrets:
   hf_token:

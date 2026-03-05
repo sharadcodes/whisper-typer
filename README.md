@@ -38,7 +38,7 @@ Push-to-talk voice transcription using Faster-Whisper. System tray app + hotkey;
 | `start-transcribe-local.ps1` / `start-transcribe-local.sh` | Start transcribe server locally (no Docker). Run `setup-transcribe-local` first. |
 | `setup-transcribe-local.ps1` / `setup-transcribe-local.sh` | One-time setup: venv, deps, model download. For running without Docker. |
 | `client.py` | Tray + hotkey client — records on Alt+PageUp and auto-types the result. |
-| `client_ui.py` | Window UI client — record button, shows transcription, copy/clear. |
+| `client_ui.py` | Window UI client — record button, shows transcription, copy/clear, and server management (start/stop/logs). |
 
 ---
 
@@ -94,11 +94,17 @@ Logs: `docker compose logs -f faster-whisper`
 uv run client.py
 ```
 
-**Window UI client** (record button, shows text, copy/clear — no hotkeys):
+**Window UI client** (record button, shows text, copy/clear, and server management — no hotkeys):
 
 ```powershell
 uv run client_ui.py
 ```
+
+`client_ui.py` has a "Server" tab that lets you:
+- **Start Local**: Automatically finds the `.venv` and installs dependencies if needed.
+- **Start Docker**: Runs `docker compose up -d --build`.
+- **View Logs**: See real-time server output (local or container logs).
+- **Health indicator**: A status dot (top-right) shows if the server is currently reachable.
 
 Or with standard Python (after `uv venv` and `uv pip install .`):
 
