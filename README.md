@@ -118,3 +118,15 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for det
 ## License
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## About the Author
+
+**Sharad Raj Singh Maurya**  
+AI Engineer and Open Source enthusiast.  
+
+- **GitHub:** [@sharadcodes](https://github.com/sharadcodes)  
+- **Project:** [Whisper Typer](https://github.com/sharadcodes/whisper-typer)  
+
+Feel free to reach out for collaborations or to report any issues!

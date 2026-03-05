@@ -1,6 +1,7 @@
 """Whisper Typer — GUI client."""
 import threading
 import time
+import webbrowser
 from queue import Queue
 
 import numpy as np
@@ -87,10 +88,12 @@ class WhisperUI(ctk.CTk):
         self._tab_t = self._tabs.add("  Transcribe  ")
         self._tab_h = self._tabs.add("  History  ")
         self._tab_s = self._tabs.add("  Server  ")
+        self._tab_a = self._tabs.add("  About  ")
 
         self._build_transcribe_tab()
         self._build_history_tab()
         self._build_server_tab()
+        self._build_about_tab()
 
     def _build_transcribe_tab(self):
         tab = self._tab_t
@@ -141,7 +144,7 @@ class WhisperUI(ctk.CTk):
         self._textbox.configure(state="disabled")
 
         self._tx_status = ctk.CTkLabel(tab, text="Ready. Press Win+G to start recording.", font=ctk.CTkFont(size=11), text_color="gray55")
-        self._tx_status.grid(row=5, column=0, pady=(8, 0), sticky="w")
+        self._tx_status.grid(row=6, column=0, pady=(8, 10), sticky="w")
 
     def _build_history_tab(self):
         tab = self._tab_h
@@ -199,7 +202,7 @@ class WhisperUI(ctk.CTk):
 
         btns = ctk.CTkFrame(card, fg_color="transparent")
         btns.grid(row=2, column=1, padx=(8, 12), pady=(8, 12), sticky="ew")
-        self._btn_start_local = ctk.CTkButton(btns, text="▶  Start Local", width=130, height=32, command=self.manager.start_local_server)
+        self._btn_start_local = ctk.CTkButton(btns, text="▶  Start Local", width=130, height=32, command=self._start_local_server_ui)
         self._btn_start_local.pack(side="left", padx=(0, 6))
         ctk.CTkButton(btns, text="Stop", width=70, height=32, fg_color="gray35", command=self.manager.stop_server).pack(side="left", padx=(0, 6))
         ctk.CTkButton(btns, text="Force Kill", width=90, height=32, fg_color="#c0392b", command=self.manager.kill_server).pack(side="left")
@@ -226,12 +229,55 @@ class WhisperUI(ctk.CTk):
         self._log_box.grid(row=3, column=0, pady=(4, 0), sticky="nsew")
         self._log_box.configure(state="disabled")
 
+    def _build_about_tab(self):
+        tab = self._tab_a
+        tab.grid_columnconfigure(0, weight=1)
+
+        # Center Container
+        cnt = ctk.CTkFrame(tab, fg_color="transparent")
+        cnt.grid(row=0, column=0, pady=40)
+
+        ctk.CTkLabel(cnt, text="Whisper Typer", font=ctk.CTkFont(size=24, weight="bold")).pack()
+        ctk.CTkLabel(cnt, text="v0.1.0", font=ctk.CTkFont(size=12), text_color="gray50").pack(pady=(0, 20))
+
+        # Author Card
+        card = ctk.CTkFrame(cnt, corner_radius=12, width=340)
+        card.pack(padx=20, pady=10)
+        
+        ctk.CTkLabel(card, text="Created by", font=ctk.CTkFont(size=11), text_color="gray55").pack(pady=(12, 0))
+        ctk.CTkLabel(card, text="Sharad Raj Singh Maurya", font=ctk.CTkFont(size=16, weight="bold")).pack()
+        ctk.CTkLabel(card, text="AI Engineer", font=ctk.CTkFont(size=13), text_color="#3498db").pack(pady=(0, 12))
+
+        def open_github():
+            webbrowser.open("https://github.com/sharadcodes")
+
+        ctk.CTkButton(
+            card, text="GitHub Profile", 
+            width=140, height=32, corner_radius=8,
+            command=open_github
+        ).pack(pady=(0, 16))
+
+        # Project Info
+        ctk.CTkLabel(
+            cnt, 
+            text="Open Source Voice-to-Text Automation\nBuilt with Faster-Whisper and CustomTkinter",
+            font=ctk.CTkFont(size=12), text_color="gray60", justify="center"
+        ).pack(pady=20)
+
+        ctk.CTkLabel(
+            cnt, text="Apache License 2.0", 
+            font=ctk.CTkFont(size=10), text_color="gray45"
+        ).pack()
+
     # ── UI LOGIC ──────────────────────────────────────────────────────────────
 
     def _toggle_recording(self):
         if self._recording:
             self._stop_recording()
         else:
+            if not self.manager.server_running:
+                self._set_tx_status("Cannot record: Server is offline.", "#e74c3c")
+                return
             self._start_recording()
 
     def _start_recording(self):
@@ -390,15 +436,35 @@ class WhisperUI(ctk.CTk):
 
     def _set_srv_state(self, state):
         cfg = {
-            "running": {"title": "Server Running", "color": "#27ae60", "badge": "  ONLINE  ", "hdr": "● Server Online"},
-            "stopped": {"title": "Server Stopped", "color": "gray45", "badge": "  OFFLINE  ", "hdr": "● Server Offline"},
+            "running": {"title": "Server Running", "color": "#27ae60", "badge": "  ONLINE  ", "hdr": "● Server Online", "btn_state": "normal"},
+            "stopped": {"title": "Server Stopped", "color": "gray45", "badge": "  OFFLINE  ", "hdr": "● Server Offline", "btn_state": "disabled"},
         }
         c = cfg[state]
         self._srv_status_label.configure(text=c["title"], text_color=c["color"])
         self._srv_status_bar.configure(fg_color=c["color"])
         self._srv_status_badge.configure(text=c["badge"])
+        
         if not self._recording:
             self._hdr_status.configure(text=c["hdr"], text_color=c["color"])
+            
+            # Button logic: disable if server is running OR starting
+            btn_disabled = (state == "running" or self.manager.server_starting)
+            self._btn_record.configure(state=c["btn_state"])
+            self._btn_start_local.configure(
+                state="disabled" if btn_disabled else "normal",
+                text="Starting…" if self.manager.server_starting else "▶  Start Local"
+            )
+
+            if state == "stopped" and not self.manager.server_starting:
+                self._set_tx_status("Server offline. Start it in the Server tab.", "gray45")
+            elif state == "running" or self.manager.server_starting:
+                if self._tx_status.cget("text").startswith("Server offline") or self.manager.server_starting:
+                    msg = "Server starting…" if self.manager.server_starting else "Ready. Press Win+G to start."
+                    self._set_tx_status(msg, "gray55")
+
+    def _start_local_server_ui(self):
+        self._btn_start_local.configure(state="disabled", text="Starting…")
+        self.manager.start_local_server()
 
     def _auto_start_srv_worker(self):
         time.sleep(1)
