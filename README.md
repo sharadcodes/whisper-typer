@@ -5,11 +5,18 @@ Supports Windows, macOS, and Linux.
 
 ## Quick Start
 
-1. From the project root, start the app:
+### 1. Direct Run (No Installation)
+If you just cloned the repo, you can run it directly:
+```powershell
+uv run run.py
+```
 
-   ```powershell
-   uv run client_ui.py
-   ```
+### 2. Standard Installation
+If you want to install it as a tool:
+```powershell
+uv pip install -e .
+whisper-typer
+```
 
 2. In the app:
    - Server is auto-started on launch if not already running.
@@ -104,8 +111,18 @@ The client runs a global hotkey listener:
 
 3. **Run the app**:
    ```bash
-   uv run client_ui.py
+   uv run run.py
    ```
+
+---
+
+## Configuration
+
+You can create a `.env` file in the project root to customize settings:
+
+- `WHISPER_MODEL`: Default model to use (e.g., `tiny`, `small`, `medium`).
+- `WHISPER_MODELS_DIR`: Custom path to store downloaded models.
+- `HF_TOKEN`: Hugging Face token for private models or faster downloads.
 
 ---
 

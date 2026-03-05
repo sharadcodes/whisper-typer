@@ -4,13 +4,12 @@ import json
 import shutil
 import subprocess
 import threading
-import time
 from datetime import datetime
 from typing import Callable, Any
 
 from .config import (
-    ROOT_DIR, HISTORY_FILE, SERVER_IP, SERVER_PORT,
-    get_venv_python
+    HISTORY_FILE, SERVER_IP, SERVER_PORT,
+    SERVER_DIR, MODELS_DIR, get_venv_python
 )
 from .api import is_server_reachable
 from .utils import is_port_in_use
@@ -68,7 +67,6 @@ class WhisperManager:
 
     def check_server_health(self) -> bool:
         """Industry practice: Check if process is still alive + HTTP health check."""
-        # 1. Check process status first (immediate detection of crashes)
         if self.local_proc:
             exit_code = self.local_proc.poll()
             if exit_code is not None:
@@ -78,7 +76,6 @@ class WhisperManager:
                 self.log_callback(f"Local server process exited unexpectedly with code {exit_code}.\n")
                 return False
 
-        # 2. Check HTTP Reachability
         self.server_running = is_server_reachable()
         if self.server_running:
             self.server_starting = False
@@ -88,9 +85,7 @@ class WhisperManager:
         if (self.local_proc and self.local_proc.poll() is None) or self.server_starting:
             return
 
-        # Check port conflict before trying to launch
         if is_port_in_use(SERVER_PORT, SERVER_IP):
-            # If port is in use but we don't own the process, check if it's our API
             if is_server_reachable(timeout_sec=0.5):
                 self.log_callback(f"Server already running on port {SERVER_PORT} (external process).\n")
                 self.server_running = True
@@ -101,31 +96,21 @@ class WhisperManager:
 
         python = get_venv_python()
         if not python:
-            self.log_callback("No venv found. Please run 'uv run' to set up.\n")
+            self.log_callback("Python interpreter not found.\n")
             return
 
         self.server_starting = True
 
         def run_srv():
-            env_vars = os.environ.copy()
-            env_path = os.path.join(ROOT_DIR, ".env")
-            if os.path.isfile(env_path):
-                with open(env_path, "r") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            env_vars[k.strip()] = v.strip()
-
-            server_dir = os.path.join(ROOT_DIR, "root", "app")
+            server_dir = str(SERVER_DIR)
             self.log_callback(f"Starting local server with {python}…\n")
 
             try:
-                # Use subprocess.CREATE_NEW_PROCESS_GROUP on Windows to separate signals
                 creation_flags = 0
                 if sys.platform == "win32":
                     creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
+                # Point to the app inside the package
                 self.local_proc = subprocess.Popen(
                     [
                         python, "-m", "uvicorn", "transcribe_api:app",
@@ -136,7 +121,7 @@ class WhisperManager:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
-                    env=env_vars,
+                    env=os.environ.copy(),
                     creationflags=creation_flags
                 )
                 self._stream_logs(self.local_proc)
@@ -153,25 +138,19 @@ class WhisperManager:
             self.local_proc.terminate()
             
             def cleanup(p):
-                try: 
+                try:
                     p.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    self.log_callback("Server did not stop in time, killing...\n")
                     p.kill()
                 self.local_proc = None
             
             threading.Thread(target=cleanup, args=(self.local_proc,), daemon=True).start()
-
-        if self.docker_log_proc and self.docker_log_proc.poll() is None:
-            self.docker_log_proc.terminate()
-            self.docker_log_proc = None
 
     def kill_server(self):
         self.server_starting = False
         if self.local_proc and self.local_proc.poll() is None:
             try:
                 if sys.platform == "win32":
-                    # Correct Windows practice: Force kill the entire process tree
                     subprocess.run(["taskkill", "/PID", str(self.local_proc.pid), "/F", "/T"], 
                                  capture_output=True, check=False)
                 else:
@@ -193,17 +172,18 @@ class WhisperManager:
     def download_model(self, model_name: str, on_complete: Callable[[bool], None]):
         python = get_venv_python()
         if not python:
-            self.log_callback("No venv found.\n")
+            self.log_callback("Python interpreter not found.\n")
             return
 
         def run():
-            self.log_callback(f"Downloading model '{model_name}'...\n")
+            self.log_callback(f"Downloading model '{model_name}' to {MODELS_DIR}...\n")
             try:
+                # Use raw string for download_root to handle Windows backslashes
                 cmd = [
                     python, "-c",
-                    f"from faster_whisper import WhisperModel; WhisperModel('{model_name}', device='cpu', compute_type='int8', download_root='models')"
+                    f"from faster_whisper import WhisperModel; WhisperModel('{model_name}', device='cpu', compute_type='int8', download_root=r'{MODELS_DIR}')"
                 ]
-                proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True)
+                proc = subprocess.run(cmd, capture_output=True, text=True)
                 if proc.returncode == 0:
                     self.log_callback(f"Model '{model_name}' ready.\n")
                     on_complete(True)
@@ -217,7 +197,7 @@ class WhisperManager:
         threading.Thread(target=run, daemon=True).start()
 
     def delete_model(self, model_name: str):
-        model_path = os.path.join(ROOT_DIR, "models", model_name)
+        model_path = os.path.join(MODELS_DIR, model_name)
         if os.path.isdir(model_path):
             try:
                 shutil.rmtree(model_path)

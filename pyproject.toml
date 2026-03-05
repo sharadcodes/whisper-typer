@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "whisper-typer"
 version = "0.1.0"
@@ -16,7 +20,14 @@ dependencies = [
     "pillow",
     "pynput",
     "customtkinter",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "faster-whisper",
 ]
+
+[project.scripts]
+whisper-typer = "whisper_typer.client_ui:main"
 
 [project.urls]
 Homepage = "https://github.com/sharadcodes/whisper-typer"

@@ -1,10 +1,21 @@
 import os
 import sys
+from pathlib import Path
 
-# ── Project Paths ─────────────────────────────────────────────────────────────
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HISTORY_FILE = os.path.join(ROOT_DIR, "history.json")
-MODELS_DIR = os.path.join(ROOT_DIR, "models")
+# ── Package & Data Paths ──────────────────────────────────────────────────────
+# Internal package directory
+PACKAGE_DIR = Path(__file__).resolve().parent.parent
+# Server directory inside the package
+SERVER_DIR = PACKAGE_DIR / "server"
+
+# User Data Directory (Standard for PyPI packages)
+# e.g., C:\Users\Name\.whisper-typer or /home/name/.whisper-typer
+DATA_DIR = Path.home() / ".whisper-typer"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+HISTORY_FILE = str(DATA_DIR / "history.json")
+# Allow override via environment variable
+MODELS_DIR = os.environ.get("WHISPER_MODELS_DIR", str(DATA_DIR / "models"))
 
 # ── Server Config ─────────────────────────────────────────────────────────────
 SERVER_IP = "127.0.0.1"
@@ -25,24 +36,16 @@ TRANSCRIBE_MODE_LIVE = "Live typing"
 TRANSCRIBE_MODE_BATCH = "Full Capture"
 TRANSCRIBE_MODES = [TRANSCRIBE_MODE_LIVE, TRANSCRIBE_MODE_BATCH]
 
-LOCAL_SERVER_PACKAGES = [
-    ("fastapi", "fastapi"),
-    ("uvicorn", "uvicorn"),
-    ("python-multipart", "multipart"),
-    ("faster-whisper", "faster_whisper"),
-    ("numpy", "numpy"),
-]
-
 def get_venv_python() -> str | None:
-    """Path to project venv Python, or None if no venv found."""
-    if sys.platform == "win32":
-        for name in (".venv", "venv"):
-            exe = os.path.join(ROOT_DIR, name, "Scripts", "python.exe")
-            if os.path.isfile(exe):
-                return exe
-    else:
-        for name in (".venv", "venv"):
-            exe = os.path.join(ROOT_DIR, name, "bin", "python")
-            if os.path.isfile(exe):
-                return exe
-    return None
+    """Path to current Python interpreter."""
+    # When installed, we usually just want the current sys.executable
+    # which is the one managing the environment.
+    if getattr(sys, 'frozen', False):
+        # If running as an EXE
+        return sys.executable
+    
+    # Check if we are in a virtual environment
+    if sys.prefix != sys.base_prefix:
+        return sys.executable
+        
+    return sys.executable

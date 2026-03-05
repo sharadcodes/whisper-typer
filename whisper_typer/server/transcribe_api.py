@@ -23,7 +23,7 @@ DEFAULT_MODEL = os.environ.get("WHISPER_MODEL", "small")
 _MODELS_DIR_DEFAULT = (
     "/config"
     if os.path.isdir("/config")
-    else str(Path(__file__).resolve().parents[2] / "models")
+    else str(Path.home() / ".whisper-typer" / "models")
 )
 MODELS_DIR = os.environ.get("WHISPER_MODELS_DIR", _MODELS_DIR_DEFAULT)
 

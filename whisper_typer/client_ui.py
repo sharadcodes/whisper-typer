@@ -9,15 +9,15 @@ import sounddevice as sd
 from pynput.keyboard import Controller as KeyboardController, GlobalHotKeys
 import customtkinter as ctk
 
-from src.config import (
+from .core.config import (
     SERVER_IP, SERVER_PORT, SAMPLE_RATE, 
     SILENCE_WINDOW_SECONDS, SPEECH_THRESHOLD, MIN_SPEECH_SECONDS,
     STREAM_BLOCK_SIZE, MODELS, TRANSCRIBE_MODE_LIVE, 
     TRANSCRIBE_MODE_BATCH, TRANSCRIBE_MODES, HEALTH_POLL_SEC
 )
-from src.utils import trim_trailing_silence, make_status_icon
-from src.api import send_to_server
-from src.manager import WhisperManager
+from .core.utils import trim_trailing_silence, make_status_icon
+from .core.api import send_to_server
+from .core.manager import WhisperManager
 
 class WhisperUI(ctk.CTk):
     def __init__(self):
@@ -541,5 +541,9 @@ class WhisperUI(ctk.CTk):
             self._tray_icon.stop()
         self.destroy()
 
+def main():
+    app = WhisperUI()
+    app.mainloop()
+
 if __name__ == "__main__":
-    WhisperUI().mainloop()
+    main()

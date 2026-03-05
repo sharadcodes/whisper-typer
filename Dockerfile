@@ -25,7 +25,7 @@ RUN mkdir -p /run/whisper-temp && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
-COPY root/app/ /app/
+COPY whisper_typer/server/ /app/
 
 WORKDIR /app
 
