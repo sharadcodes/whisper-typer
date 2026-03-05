@@ -1,0 +1,18 @@
+services:
+  faster-whisper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: faster-whisper
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - whisper_data:/config # Persistent storage for models inside Docker
+    ports:
+      - 8000:8000   # FastAPI /transcribe
+    restart: unless-stopped
+
+volumes:
+  whisper_data:
