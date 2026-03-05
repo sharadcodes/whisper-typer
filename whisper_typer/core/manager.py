@@ -156,17 +156,23 @@ class WhisperManager:
         proc = self.local_proc
         if proc and proc.poll() is None:
             self.log_callback("Terminating local server...\n")
-            proc.terminate()
 
             def cleanup(p):
                 try:
-                    p.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                # Only clear the reference if it still points to this process,
-                # not to a newly started one.
-                if self.local_proc is p:
-                    self.local_proc = None
+                    if sys.platform == "win32":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(p.pid), "/F", "/T"],
+                            capture_output=True, check=False
+                        )
+                    else:
+                        p.terminate()
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                finally:
+                    if self.local_proc is p:
+                        self.local_proc = None
 
             threading.Thread(target=cleanup, args=(proc,), daemon=True).start()
 
@@ -176,16 +182,22 @@ class WhisperManager:
         proc = self.local_proc
         if proc and proc.poll() is None:
             self.log_callback("Shutting down server...\n")
-            proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                if sys.platform == "win32":
-                    subprocess.run(
-                        ["taskkill", "/PID", str(proc.pid), "/F", "/T"],
-                        capture_output=True, check=False
-                    )
-                else:
+            if sys.platform == "win32":
+                # taskkill /T kills the whole process tree, including uvicorn worker
+                # child processes that proc.terminate() would leave as orphans.
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/F", "/T"],
+                    capture_output=True, check=False
+                )
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
+            else:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
                     proc.kill()
             self.local_proc = None
 

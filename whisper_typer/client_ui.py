@@ -1,4 +1,5 @@
 """Whisper Typer — GUI client."""
+import signal
 import sys
 import threading
 import time
@@ -67,6 +68,13 @@ class WhisperUI(ctk.CTk):
         threading.Thread(target=self._auto_start_srv_worker, daemon=True).start()
         threading.Thread(target=self._hotkey_listener, daemon=True).start()
         self._update_tray_icon()
+
+        # Allow Ctrl+C from the CLI to cleanly shut down the app.
+        # tkinter's mainloop swallows SIGINT on its own, so we register a handler
+        # that schedules _on_close on the main thread, and a periodic after() tick
+        # that wakes the event loop so Python can actually deliver the signal.
+        signal.signal(signal.SIGINT, lambda *_: self.after(0, self._on_close))
+        self._signal_tick()
 
     # ══════════════════════════════════════════════════════════════════════════
     # BUILD UI
@@ -564,7 +572,14 @@ class WhisperUI(ctk.CTk):
     def _on_mode_change(self, val):
         self._transcribe_mode_var.set(val)
 
+    def _signal_tick(self):
+        """Periodic no-op that wakes the tkinter event loop so Python can deliver signals."""
+        if not self._closed:
+            self.after(200, self._signal_tick)
+
     def _on_close(self):
+        if self._closed:
+            return
         self._closed = True
         self.manager.close()
         if hasattr(self, "_tray_icon"):
@@ -573,7 +588,10 @@ class WhisperUI(ctk.CTk):
 
 def main():
     app = WhisperUI()
-    app.mainloop()
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        app._on_close()
 
 if __name__ == "__main__":
     main()
