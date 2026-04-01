@@ -13,8 +13,9 @@ Supports Windows, macOS, and Linux.
 2. **In the app**:
    - The server auto-starts on launch.
    - Choose a **Model** and **Input Mode** (Live or Full Capture).
-   - Press **Cmd+G** (macOS) to start/stop recording.
-   - On Windows, **Win+G** may be intercepted by Xbox Game Bar; if so, use the in-app **Start Recording** button or disable the Game Bar shortcut in Windows settings.
+   - Use the Global Hotkey: **Ctrl+Win** (Windows) or **Ctrl+Cmd** (macOS).
+   - **Hold** keys to record, release to stop and transcribe.
+   - **Quick Double-Tap** to enter "Hands-free" mode (press again to stop).
    - Text types into your active window automatically.
 
 ---
@@ -47,7 +48,7 @@ flowchart TD
     I --> J["Keyboard Typing to Active Window"]
 ```
 
-- User presses `Win+G` to toggle recording.
+- User triggers hotkey (**Ctrl+Win** or **Ctrl+Cmd**).
 - Audio is captured from input stream.
 - App checks selected mode:
   - **Live typing** → chunks split by silence windows and enqueued.
@@ -62,10 +63,11 @@ flowchart TD
 
 ## Hotkeys & Auto-typing
 
-The client runs a global hotkey listener:
+The client runs a global low-level hotkey listener:
 
-- **Cmd+G** (macOS) — Toggle recording.
-- **Win+G** (Windows) may be reserved by Xbox Game Bar; if it does not work, use the in-app **Start Recording** button.
+- **Ctrl+Win** (Windows) or **Ctrl+Cmd** (macOS).
+- **Hold to Record**: Recording stays active as long as keys are held. Releasing either key stops and triggers transcription.
+- **Hands-free (Toggle)**: Double-tap the combo quickly to stay in recording mode after release. Tap again to stop.
 - When recording is stopped, the client waits for the transcription and then **simulates keyboard typing** to insert the text into the currently focused window.
 
 > **macOS Users:** 

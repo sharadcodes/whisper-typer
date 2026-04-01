@@ -48,7 +48,9 @@ class WhisperManager:
             pass
 
     def add_history_entry(self, text: str, model: str) -> dict:
-        ts = datetime.now().strftime("%I:%M %p").lstrip("0")
+        ts = datetime.now().strftime("%I:%M %p")
+        if ts.startswith("0"):
+            ts = ts[1:]
         date_str = datetime.now().strftime("%b %d")
         entry = {"time": f"{date_str}, {ts}", "model": model, "text": text}
         self.history.append(entry)
@@ -117,6 +119,11 @@ class WhisperManager:
                             line = line.strip()
                             if line and not line.startswith("#") and "=" in line:
                                 k, v = line.split("=", 1)
+                                if k.startswith("export "):
+                                    k = k[7:]
+                                # Handle inline comments
+                                if " #" in v:
+                                    v = v.split(" #")[0]
                                 # Strip whitespace and surrounding quotes (single or double)
                                 v = v.strip().strip('"').strip("'")
                                 env_vars[k.strip()] = v
@@ -126,9 +133,16 @@ class WhisperManager:
             self.log_callback(f"Starting local server with {python}…\n")
 
             try:
-                creation_flags = 0
+                kwargs = {
+                    "cwd": server_dir,
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.STDOUT,
+                    "text": True,
+                    "bufsize": 1,
+                    "env": env_vars,
+                }
                 if sys.platform == "win32":
-                    creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+                    kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
                 # Point to the app inside the package
                 self.local_proc = subprocess.Popen(
@@ -136,13 +150,7 @@ class WhisperManager:
                         python, "-m", "uvicorn", "transcribe_api:app",
                         "--host", SERVER_IP, "--port", str(SERVER_PORT),
                     ],
-                    cwd=server_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    env=env_vars,
-                    creationflags=creation_flags
+                    **kwargs
                 )
                 self._stream_logs(self.local_proc)
             except Exception as e:
@@ -218,9 +226,15 @@ class WhisperManager:
                 self.log_callback(f"Kill error: {e}\n")
 
     def _stream_logs(self, proc: subprocess.Popen):
-        if proc.stdout:
+        if not proc.stdout:
+            return
+        
+        def read_logs():
             for line in proc.stdout:
+                if not self.server_starting and not self.server_running:
+                    break
                 self.log_callback(line)
+        threading.Thread(target=read_logs, daemon=True).start()
 
     # ── Model Management ──────────────────────────────────────────────────────
 
@@ -234,11 +248,19 @@ class WhisperManager:
             self.log_callback(f"Downloading model '{model_name}' to {MODELS_DIR}...\n")
             try:
                 # Use raw string for download_root to handle Windows backslashes
-                cmd = [
-                    python, "-c",
-                    f"from faster_whisper import WhisperModel; WhisperModel('{model_name}', device='cpu', compute_type='int8', download_root=r'{MODELS_DIR}')"
-                ]
-                proc = subprocess.run(cmd, capture_output=True, text=True)
+                script = f"""
+import os
+from faster_whisper import WhisperModel
+model_name = os.environ['MODEL_NAME']
+models_dir = os.environ['MODELS_DIR']
+WhisperModel(model_name, device='cpu', compute_type='int8', download_root=models_dir)
+"""
+                env = os.environ.copy()
+                env["MODEL_NAME"] = model_name
+                env["MODELS_DIR"] = str(MODELS_DIR)
+
+                cmd = [python, "-c", script]
+                proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
                 if proc.returncode == 0:
                     self.log_callback(f"Model '{model_name}' ready.\n")
                     on_complete(True)

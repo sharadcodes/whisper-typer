@@ -1,6 +1,6 @@
 import socket
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageColor
 from .config import SAMPLE_RATE
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -37,13 +37,11 @@ def make_status_icon(status: str) -> Image.Image:
     }
     color = color_map.get(status, "gray50")
     
-    # Simple draw for circles
-    if color.startswith("#"):
-        color = color.lstrip("#")
-        r, g, b = tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
-    else:
-        # Fallback for named colors like 'gray45'
-        r, g, b = (115, 115, 115) 
+    try:
+        rgb = ImageColor.getrgb(color)
+        r, g, b = rgb[:3]
+    except Exception:
+        r, g, b = (115, 115, 115)
     
     draw.ellipse([4, 4, size - 4, size - 4], fill=(r, g, b, 255))
     return img

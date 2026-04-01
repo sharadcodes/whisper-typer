@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from faster_whisper import WhisperModel
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -117,7 +118,7 @@ async def transcribe(
     # 3. Transcribe
     try:
         whisper_model = get_model(model)
-        segments, info = whisper_model.transcribe(audio_float, beam_size=1)
+        segments, info = await run_in_threadpool(whisper_model.transcribe, audio_float, beam_size=1)
         text = "".join(segment.text for segment in segments)
         
         result = text.strip()

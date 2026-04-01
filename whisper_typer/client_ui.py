@@ -8,7 +8,7 @@ from queue import Queue
 
 import numpy as np
 import sounddevice as sd
-from pynput.keyboard import Controller as KeyboardController, GlobalHotKeys
+from pynput.keyboard import Controller as KeyboardController
 import customtkinter as ctk
 
 from .core.config import (
@@ -17,7 +17,7 @@ from .core.config import (
     STREAM_BLOCK_SIZE, MAX_RECORD_SECONDS, MODELS, TRANSCRIBE_MODE_LIVE,
     TRANSCRIBE_MODE_BATCH, TRANSCRIBE_MODES, HEALTH_POLL_SEC
 )
-from .core.utils import trim_trailing_silence, make_status_icon
+from .core.utils import make_status_icon
 from .core.api import send_to_server
 from .core.manager import WhisperManager
 
@@ -55,6 +55,7 @@ class WhisperUI(ctk.CTk):
         self._speech_frames = 0
         self._last_transcription = ""
         self._transcribe_mode_var = ctk.StringVar(value=TRANSCRIBE_MODE_BATCH)
+        self._hotkey_name = "Ctrl+Win" if sys.platform == "win32" else "Ctrl+Cmd"
 
         self._build_ui()
         self._setup_tray()
@@ -109,7 +110,7 @@ class WhisperUI(ctk.CTk):
     def _build_transcribe_tab(self):
         tab = self._tab_t
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(4, weight=1)
+        tab.grid_rowconfigure(5, weight=1)
 
         # Model row
         row0 = ctk.CTkFrame(tab, fg_color="transparent")
@@ -141,7 +142,8 @@ class WhisperUI(ctk.CTk):
         # Mode Info
         info_text = (
             "• Live typing: Sends audio chunks as you speak (faster, but may split words).\n"
-            "• Full Capture: Sends the full recording when you stop (more accurate context)."
+            "• Full Capture: Replaces the transcript with the full recording when you stop.\n"
+            f"• Hotkey: Hold {self._hotkey_name} to record · Double-tap for hands-free"
         )
         ctk.CTkLabel(
             tab, text=info_text, font=ctk.CTkFont(size=11), 
@@ -154,7 +156,7 @@ class WhisperUI(ctk.CTk):
         self._textbox.grid(row=5, column=0, pady=(4, 8), sticky="nsew")
         self._textbox.configure(state="disabled")
 
-        self._tx_status = ctk.CTkLabel(tab, text="Ready. Press Win+G to start recording.", font=ctk.CTkFont(size=11), text_color="gray55")
+        self._tx_status = ctk.CTkLabel(tab, text=f"Ready. {self._hotkey_name}: hold or double-tap to record.", font=ctk.CTkFont(size=11), text_color="gray55")
         self._tx_status.grid(row=6, column=0, pady=(8, 10), sticky="w")
 
     def _build_history_tab(self):
@@ -178,9 +180,13 @@ class WhisperUI(ctk.CTk):
         self._hist_empty = ctk.CTkLabel(self._hist_scroll, text="No transcriptions yet.", font=ctk.CTkFont(size=13), text_color="gray45")
 
         self._hist_card_count = 0
+        self._history_widgets = []
         # Load existing history
-        for entry in self.manager.history:
-            self._render_history_card(entry)
+        if not self.manager.history:
+            self._hist_empty.grid(row=0, column=0, pady=20)
+        else:
+            for entry in self.manager.history:
+                self._render_history_card(entry)
         self._update_history_count()
 
     def _build_server_tab(self):
@@ -244,6 +250,7 @@ class WhisperUI(ctk.CTk):
     def _build_about_tab(self):
         tab = self._tab_a
         tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(0, weight=1)
 
         # Center Container
         cnt = ctk.CTkFrame(tab, fg_color="transparent")
@@ -299,20 +306,23 @@ class WhisperUI(ctk.CTk):
         self._is_speaking = False
         self._silence_frames = 0
         self._speech_frames = 0
+        current_mode = self._transcribe_mode_var.get()
 
         def cb(indata, _frames, _time, status):
-            if not self._recording or indata.size == 0:
-                return
-            if time.time() - self._recording_start_time >= MAX_RECORD_SECONDS:
-                self.after(0, self._stop_recording)
+            if indata.size == 0:
                 return
             with self._audio_lock:
+                if not self._recording:
+                    return
+                if time.time() - self._recording_start_time >= MAX_RECORD_SECONDS:
+                    self.after(0, self._stop_recording)
+                    return
                 block = np.array(indata, copy=True)
                 amp = float(np.max(np.abs(block)))
                 silence_limit = int(SILENCE_WINDOW_SECONDS * SAMPLE_RATE)
                 min_speech = int(MIN_SPEECH_SECONDS * SAMPLE_RATE)
 
-                if self._transcribe_mode_var.get() == TRANSCRIBE_MODE_LIVE:
+                if current_mode == TRANSCRIBE_MODE_LIVE:
                     if amp >= SPEECH_THRESHOLD:
                         self._recording_chunks.append(block)
                         self._speech_frames += block.shape[0]
@@ -358,9 +368,9 @@ class WhisperUI(ctk.CTk):
             chunks = self._recording_chunks
             self._recording_chunks = []
             self._is_speaking = False
-            sd.stop()
             
         if chunks:
+            self._btn_record.configure(state="disabled", text="⏳ Processing...", fg_color="gray50")
             recording = np.concatenate(chunks, axis=0)
             mode = "append" if self._transcribe_mode_var.get() == TRANSCRIBE_MODE_LIVE else "replace"
             self._enqueue_transcription(recording, mode, True)
@@ -375,8 +385,7 @@ class WhisperUI(ctk.CTk):
         while True:
             audio, mode, stop_after = self._transcribe_queue.get()
             try:
-                processed = trim_trailing_silence(audio)
-                text = send_to_server(processed, self._model_var.get())
+                text = send_to_server(audio, self._model_var.get())
                 self.after(0, self._handle_result, text, mode, stop_after)
             except Exception as e:
                 self._log(f"Transcription worker error: {e}\n")
@@ -384,7 +393,7 @@ class WhisperUI(ctk.CTk):
                 if stop_after:
                     self.after(0, self._finish_ui_reset)
             finally:
-                self._set_processing_state(False)
+                self.after(0, self._set_processing_state, False)
                 self._transcribe_queue.task_done()
 
     def _handle_result(self, text, mode, stop_after):
@@ -418,7 +427,19 @@ class WhisperUI(ctk.CTk):
     def _finish_ui_reset(self):
         self._btn_record.configure(state="normal", text="⏺  Start Recording", fg_color=self._btn_rec_fg)
         self._hdr_status.configure(text="✓ Ready", text_color="#27ae60")
-        self._set_tx_status("Ready. Press Win+G to start.", "gray55")
+        self._set_tx_status(f"Ready. {self._hotkey_name}: hold or double-tap to record.", "gray55")
+
+    def _start_recording_if_possible(self):
+        if self._recording:
+            return
+        if not self.manager.server_running:
+            self._set_tx_status("Cannot record: Server is offline.", "#e74c3c")
+            return
+        self._start_recording()
+
+    def _stop_recording_if_active(self):
+        if self._recording:
+            self._stop_recording()
 
     # ── HELPERS ───────────────────────────────────────────────────────────────
 
@@ -445,15 +466,25 @@ class WhisperUI(ctk.CTk):
         self._hist_count_label.configure(text=f"{n} transcription{'s' if n != 1 else ''}")
 
     def _render_history_card(self, entry):
-        self._hist_empty.grid_forget()
+        if self._hist_empty.winfo_ismapped():
+            self._hist_empty.grid_forget()
         card = ctk.CTkFrame(self._hist_scroll, corner_radius=8)
         card.grid(row=self._hist_card_count, column=0, pady=(0, 8), sticky="ew")
+        
+        # Keep maximum 50 widgets
+        self._history_widgets.append(card)
+        if len(self._history_widgets) > 50:
+            oldest = self._history_widgets.pop(0)
+            oldest.destroy()
+
         self._hist_card_count += 1
         ctk.CTkLabel(card, text=f"{entry['time']} | {entry['model']}", font=ctk.CTkFont(size=10), text_color="gray55").pack(anchor="w", padx=12, pady=(8, 0))
-        ctk.CTkLabel(card, text=entry["text"], font=ctk.CTkFont(size=13), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(4, 8))
+        ctk.CTkLabel(card, text=entry["text"], font=ctk.CTkFont(size=13), wraplength=0, justify="left").pack(anchor="w", padx=12, pady=(4, 8))
 
     def _health_worker(self):
         while True:
+            if self._closed:
+                break
             is_up = self.manager.check_server_health()
             self.after(0, self._set_srv_state, "running" if is_up else "stopped")
             time.sleep(HEALTH_POLL_SEC)
@@ -476,7 +507,8 @@ class WhisperUI(ctk.CTk):
 
             # Button logic: disable if server is running OR starting
             btn_disabled = (state == "running" or self.manager.server_starting)
-            self._btn_record.configure(state=c["btn_state"])
+            if not self._recording and not self._processing:
+                self._btn_record.configure(state=c["btn_state"])
             self._btn_start_local.configure(
                 state="disabled" if btn_disabled else "normal",
                 text="Starting…" if self.manager.server_starting else "▶  Start Local"
@@ -486,7 +518,7 @@ class WhisperUI(ctk.CTk):
                 self._set_tx_status("Server offline. Start it in the Server tab.", "gray45")
             elif state == "running" or self.manager.server_starting:
                 if self._tx_status.cget("text").startswith("Server offline") or self.manager.server_starting:
-                    msg = "Server starting…" if self.manager.server_starting else "Ready. Press Win+G to start."
+                    msg = "Server starting…" if self.manager.server_starting else f"Ready. {self._hotkey_name}: hold or double-tap to record."
                     self._set_tx_status(msg, "gray55")
 
     def _start_local_server_ui(self):
@@ -499,18 +531,83 @@ class WhisperUI(ctk.CTk):
             self.manager.start_local_server()
 
     def _hotkey_listener(self):
-        def on_activate():
-            self.after(0, self._toggle_recording)
+        from pynput import keyboard
+
+        # State machine: idle → hold → (release: stop or short-tap → waiting → double-tap → hands_free)
+        st = {
+            "ctrl": False, "cmd": False, "combo_was_active": False,
+            "mode": "idle", "press_time": 0.0, "timer": None,
+        }
+
+        def is_combo():
+            return st["ctrl"] and st["cmd"]
+
+        def on_combo_activate():
+            if st["mode"] == "hands_free":
+                # Third press → stop hands-free recording
+                st["mode"] = "idle"
+                if self._recording:
+                    self.after(0, self._stop_recording_if_active)
+            elif st["mode"] == "waiting":
+                # Second tap within window → enter hands-free mode
+                if st["timer"]:
+                    st["timer"].cancel()
+                    st["timer"] = None
+                st["mode"] = "hands_free"
+                self._log("Hands-free mode: speak freely, press hotkey again to stop.\n")
+            else:
+                # First press → hold-to-record mode
+                st["press_time"] = time.time()
+                st["mode"] = "hold"
+                self.after(0, self._start_recording_if_possible)
+
+        def on_combo_deactivate():
+            if st["mode"] == "hold":
+                duration = time.time() - st["press_time"]
+                if duration >= 0.35:
+                    # Long hold released → stop immediately
+                    st["mode"] = "idle"
+                    self.after(0, self._stop_recording_if_active)
+                else:
+                    # Short tap released → wait for possible double-tap
+                    st["mode"] = "waiting"
+                    def timeout():
+                        if st["mode"] == "waiting":
+                            st["mode"] = "idle"
+                            self.after(0, self._stop_recording_if_active)
+                    t = threading.Timer(0.4, timeout)
+                    st["timer"] = t
+                    t.start()
+            # hands_free + release → do nothing, stay recording
+
+        def on_press(key):
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                st["ctrl"] = True
+            elif key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+                st["cmd"] = True
+            combo = is_combo()
+            if combo and not st["combo_was_active"]:
+                on_combo_activate()
+            st["combo_was_active"] = combo
+
+        def on_release(key):
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                st["ctrl"] = False
+            elif key in (keyboard.Key.cmd, keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+                st["cmd"] = False
+            combo = is_combo()
+            if not combo and st["combo_was_active"]:
+                on_combo_deactivate()
+            st["combo_was_active"] = combo
+
         try:
-            h = GlobalHotKeys({"<cmd>+g": on_activate})
-            h.start()
-            if sys.platform == "win32":
-                self._log(
-                    "Note: Win+G is reserved by Windows (Xbox Game Bar) and "
-                    "may not work as a global hotkey. Use the Record button instead "
-                    "or disable Game Bar in Windows Settings.\n"
-                )
-            h.join()
+            self._log(
+                f"Hotkey: {self._hotkey_name}\n"
+                f"  • Hold to record, release to transcribe\n"
+                f"  • Double-tap for hands-free mode\n"
+            )
+            with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+                listener.join()
         except Exception as e:
             self._log(f"Hotkey listener failed: {e}\n")
 
@@ -521,8 +618,8 @@ class WhisperUI(ctk.CTk):
             time.sleep(0.4)
             kb = KeyboardController()
             kb.type(text)
-        except Exception:
-            pass
+        except Exception as e:
+            self._log(f"Auto-type failed: {e}\n")
 
     def _update_tray_icon(self):
         if self._closed:
@@ -538,7 +635,7 @@ class WhisperUI(ctk.CTk):
     def _setup_tray(self):
         try:
             from pystray import Icon, Menu, MenuItem
-            m = Menu(MenuItem("Toggle Recording", lambda: self._toggle_recording()), MenuItem("Quit", self._on_close))
+            m = Menu(MenuItem("Toggle Recording", lambda: self.after(0, self._toggle_recording)), MenuItem("Quit", lambda: self.after(0, self._on_close)))
             self._tray_icon = Icon("whisper-typer", make_status_icon("stopped"), menu=m)
             threading.Thread(target=self._tray_icon.run, daemon=True).start()
         except Exception:
@@ -554,10 +651,12 @@ class WhisperUI(ctk.CTk):
 
     def _clear_history(self):
         self.manager.clear_history()
-        for w in self._hist_scroll.winfo_children():
+        for w in self._history_widgets:
             w.destroy()
+        self._history_widgets = []
         self._hist_card_count = 0
         self._update_history_count()
+        self._hist_empty.grid(row=0, column=0, pady=20)
 
     def _clear_logs(self):
         self._log_box.configure(state="normal")
@@ -582,7 +681,7 @@ class WhisperUI(ctk.CTk):
             return
         self._closed = True
         self.manager.close()
-        if hasattr(self, "_tray_icon"):
+        if hasattr(self, "_tray_icon") and self._tray_icon:
             self._tray_icon.stop()
         self.destroy()
 

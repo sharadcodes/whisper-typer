@@ -21,6 +21,7 @@ RUN mkdir -p /run/whisper-temp && \
     python3 -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -U pip wheel && \
     /opt/venv/bin/pip install --no-cache-dir fastapi uvicorn python-multipart faster-whisper numpy && \
+    /opt/venv/bin/python3 -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8', download_root='/config')" && \
     apt-get purge -y curl && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/* /tmp/*
