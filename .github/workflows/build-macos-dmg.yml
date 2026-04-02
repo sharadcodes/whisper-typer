@@ -1,0 +1,38 @@
+name: build-macos-dmg
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Install dependencies (locked)
+        run: |
+          uv sync --locked
+          uv pip install pyinstaller dmgbuild
+
+      - name: Build app + DMG
+        run: |
+          chmod +x packaging/build_macos_dmg.sh
+          uv run packaging/build_macos_dmg.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Whisper-Typer-macOS-DMG
+          path: out/Whisper-Typer-macOS.dmg
+
