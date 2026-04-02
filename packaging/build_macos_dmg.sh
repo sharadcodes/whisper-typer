@@ -10,8 +10,6 @@ mkdir -p "$OUT_DIR"
 
 rm -rf "$DIST_DIR" "$BUILD_DIR"
 
-python -m pip --version >/dev/null
-
 # Build an .app bundle. We use --windowed to avoid a terminal window.
 pyinstaller \
   --noconfirm \
