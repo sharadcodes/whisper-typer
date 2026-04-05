@@ -47,6 +47,7 @@ class WhisperUI(ctk.CTk):
         
         self._audio_lock = threading.Lock()
         self._transcribe_queue: Queue = Queue()
+        self._ui_queue: Queue = Queue()
         self._recording_stream: sd.InputStream | None = None
         self._recording_chunks: list[np.ndarray] = []
         
@@ -56,6 +57,7 @@ class WhisperUI(ctk.CTk):
         self._last_transcription = ""
         self._transcribe_mode_var = ctk.StringVar(value=TRANSCRIBE_MODE_BATCH)
         self._hotkey_name = "Ctrl+Win" if sys.platform == "win32" else "Ctrl+Cmd"
+        self._is_macos = (sys.platform == "darwin")
 
         self._build_ui()
         self._setup_tray()
@@ -67,14 +69,19 @@ class WhisperUI(ctk.CTk):
         threading.Thread(target=self._health_worker, daemon=True).start()
         threading.Thread(target=self._transcription_queue_worker, daemon=True).start()
         threading.Thread(target=self._auto_start_srv_worker, daemon=True).start()
-        threading.Thread(target=self._hotkey_listener, daemon=True).start()
+        if self._is_macos:
+            self.after(200, self._init_hotkey_listener)
+        else:
+            threading.Thread(target=self._init_hotkey_listener, daemon=True).start()
         self._update_tray_icon()
 
         # Allow Ctrl+C from the CLI to cleanly shut down the app.
         # tkinter's mainloop swallows SIGINT on its own, so we register a handler
         # that schedules _on_close on the main thread, and a periodic after() tick
         # that wakes the event loop so Python can actually deliver the signal.
-        signal.signal(signal.SIGINT, lambda *_: self.after(0, self._on_close))
+        signal.signal(signal.SIGINT, lambda *_: self._dispatch_ui(self._on_close))
+        if self._is_macos:
+            self.after(30, self._drain_ui_queue)
         self._signal_tick()
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -151,12 +158,36 @@ class WhisperUI(ctk.CTk):
         ).grid(row=3, column=0, pady=(0, 10), sticky="w")
 
         # Output
-        ctk.CTkLabel(tab, text="Transcription", font=ctk.CTkFont(size=12), text_color="gray60").grid(row=4, column=0, sticky="w")
+        out_hdr = ctk.CTkFrame(tab, fg_color="transparent")
+        out_hdr.grid(row=4, column=0, pady=(0, 4), sticky="ew")
+        out_hdr.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(out_hdr, text="Transcription", font=ctk.CTkFont(size=12), text_color="gray60").grid(
+            row=0, column=0, sticky="w"
+        )
+        self._btn_copy_tx = ctk.CTkButton(
+            out_hdr,
+            text="Copy",
+            width=52,
+            height=26,
+            font=ctk.CTkFont(size=11),
+            corner_radius=6,
+            fg_color="#636e72",
+            hover_color="#4f585d",
+            state="disabled",
+            command=self._copy_transcript,
+        )
+        self._btn_copy_tx.grid(row=0, column=1, sticky="e", padx=(8, 0))
+
         self._textbox = ctk.CTkTextbox(tab, font=ctk.CTkFont(size=14), corner_radius=8, wrap="word")
         self._textbox.grid(row=5, column=0, pady=(4, 8), sticky="nsew")
         self._textbox.configure(state="disabled")
 
-        self._tx_status = ctk.CTkLabel(tab, text=f"Ready. {self._hotkey_name}: hold or double-tap to record.", font=ctk.CTkFont(size=11), text_color="gray55")
+        self._tx_status = ctk.CTkLabel(
+            tab,
+            text=self._ready_status_text(),
+            font=ctk.CTkFont(size=11),
+            text_color=self._ready_status_color(),
+        )
         self._tx_status.grid(row=6, column=0, pady=(8, 10), sticky="w")
 
     def _build_history_tab(self):
@@ -315,7 +346,7 @@ class WhisperUI(ctk.CTk):
                 if not self._recording:
                     return
                 if time.time() - self._recording_start_time >= MAX_RECORD_SECONDS:
-                    self.after(0, self._stop_recording)
+                    self._dispatch_ui(self._stop_recording)
                     return
                 block = np.array(indata, copy=True)
                 amp = float(np.max(np.abs(block)))
@@ -386,14 +417,14 @@ class WhisperUI(ctk.CTk):
             audio, mode, stop_after = self._transcribe_queue.get()
             try:
                 text = send_to_server(audio, self._model_var.get())
-                self.after(0, self._handle_result, text, mode, stop_after)
+                self._dispatch_ui(self._handle_result, text, mode, stop_after)
             except Exception as e:
                 self._log(f"Transcription worker error: {e}\n")
                 # Ensure the UI is always reset so the record button doesn't stay stuck
                 if stop_after:
-                    self.after(0, self._finish_ui_reset)
+                    self._dispatch_ui(self._finish_ui_reset)
             finally:
-                self.after(0, self._set_processing_state, False)
+                self._dispatch_ui(self._set_processing_state, False)
                 self._transcribe_queue.task_done()
 
     def _handle_result(self, text, mode, stop_after):
@@ -417,9 +448,10 @@ class WhisperUI(ctk.CTk):
             self._textbox.insert("end", " ")
         self._textbox.insert("end", text)
         self._textbox.configure(state="disabled")
+        self._update_copy_button_state()
 
         # Only auto-type real transcription text, not error/warning messages
-        if not text.startswith("["):
+        if not text.startswith("[") and sys.platform != "darwin":
             threading.Thread(target=self._auto_type_text, args=(text,), daemon=True).start()
         if stop_after:
             self._finish_ui_reset()
@@ -427,7 +459,7 @@ class WhisperUI(ctk.CTk):
     def _finish_ui_reset(self):
         self._btn_record.configure(state="normal", text="⏺  Start Recording", fg_color=self._btn_rec_fg)
         self._hdr_status.configure(text="✓ Ready", text_color="#27ae60")
-        self._set_tx_status(f"Ready. {self._hotkey_name}: hold or double-tap to record.", "gray55")
+        self._set_tx_status(self._ready_status_text(), self._ready_status_color())
 
     def _start_recording_if_possible(self):
         if self._recording:
@@ -444,7 +476,39 @@ class WhisperUI(ctk.CTk):
     # ── HELPERS ───────────────────────────────────────────────────────────────
 
     def _log(self, msg):
-        self.after(0, self._append_log_ui, msg)
+        self._dispatch_ui(self._append_log_ui, msg)
+
+    def _dispatch_ui(self, fn, *args, **kwargs):
+        """Use macOS-safe UI dispatch only where it is needed."""
+        if self._is_macos:
+            self._call_in_ui(fn, *args, **kwargs)
+            return
+        if self._closed:
+            return
+        self.after(0, lambda: fn(*args, **kwargs))
+
+    def _call_in_ui(self, fn, *args, **kwargs):
+        if self._closed:
+            return
+        if threading.current_thread() is threading.main_thread():
+            fn(*args, **kwargs)
+            return
+        self._ui_queue.put((fn, args, kwargs))
+
+    def _drain_ui_queue(self):
+        if self._closed:
+            return
+        while True:
+            try:
+                fn, args, kwargs = self._ui_queue.get_nowait()
+            except Exception:
+                break
+            try:
+                fn(*args, **kwargs)
+            except Exception as e:
+                # Avoid recursive UI failures; print to stderr as a last resort.
+                print(f"UI dispatch error: {e}", file=sys.stderr)
+        self.after(30, self._drain_ui_queue)
 
     def _append_log_ui(self, msg):
         self._log_box.configure(state="normal")
@@ -454,6 +518,14 @@ class WhisperUI(ctk.CTk):
 
     def _set_tx_status(self, msg, color="gray55"):
         self._tx_status.configure(text=msg, text_color=color)
+
+    def _ready_status_text(self) -> str:
+        if self._is_macos:
+            return "Hotkey disabled on macOS. Use Start Recording button."
+        return f"Ready. {self._hotkey_name}: hold or double-tap to record."
+
+    def _ready_status_color(self) -> str:
+        return "#f39c12" if self._is_macos else "gray55"
 
     def _set_processing_state(self, active):
         with self._processing_lock:
@@ -486,7 +558,7 @@ class WhisperUI(ctk.CTk):
             if self._closed:
                 break
             is_up = self.manager.check_server_health()
-            self.after(0, self._set_srv_state, "running" if is_up else "stopped")
+            self._dispatch_ui(self._set_srv_state, "running" if is_up else "stopped")
             time.sleep(HEALTH_POLL_SEC)
 
     def _set_srv_state(self, state):
@@ -518,22 +590,53 @@ class WhisperUI(ctk.CTk):
                 self._set_tx_status("Server offline. Start it in the Server tab.", "gray45")
             elif state == "running" or self.manager.server_starting:
                 if self._tx_status.cget("text").startswith("Server offline") or self.manager.server_starting:
-                    msg = "Server starting…" if self.manager.server_starting else f"Ready. {self._hotkey_name}: hold or double-tap to record."
-                    self._set_tx_status(msg, "gray55")
+                    if self.manager.server_starting:
+                        self._set_tx_status("Server starting…", "gray55")
+                    else:
+                        self._set_tx_status(self._ready_status_text(), self._ready_status_color())
 
     def _start_local_server_ui(self):
         self._btn_start_local.configure(state="disabled", text="Starting…")
         self.manager.start_local_server()
+        # Refresh button state immediately. This is important when an external
+        # server is already running and manager marks server_running=True.
+        self._set_srv_state("running" if self.manager.server_running else "stopped")
 
     def _auto_start_srv_worker(self):
         time.sleep(1)
         if not self.manager.server_running:
             self.manager.start_local_server()
+            self._dispatch_ui(
+                self._set_srv_state,
+                "running" if self.manager.server_running else "stopped",
+            )
 
-    def _hotkey_listener(self):
+    def _init_hotkey_listener(self):
+        """Create the pynput Listener on the main thread.
+
+        On macOS, pynput's Listener.__init__ queries input sources via
+        TSMGetInputSourceProperty (HIToolbox) which must run on the main
+        dispatch queue.  keyboard.Listener is itself a threading.Thread,
+        so .start() spawns the event loop on a background thread while
+        keeping the TSM-sensitive init on the main thread.
+        """
+        # macOS 26 can hard-crash in HIToolbox when pynput queries input
+        # sources from non-main dispatch queues. Disable global hotkeys to
+        # keep the app stable and let users record via the UI button.
+        if sys.platform == "darwin":
+            self._log(
+                "Hotkey disabled on macOS due to a system API crash risk.\n"
+                "Use the Start Recording button in the Transcribe tab.\n"
+            )
+            self._set_tx_status(
+                "Hotkey disabled on macOS. Use Start Recording button.",
+                "#f39c12",
+            )
+            self._kb_listener = None
+            return
+
         from pynput import keyboard
 
-        # State machine: idle → hold → (release: stop or short-tap → waiting → double-tap → hands_free)
         st = {
             "ctrl": False, "cmd": False, "combo_was_active": False,
             "mode": "idle", "press_time": 0.0, "timer": None,
@@ -544,19 +647,16 @@ class WhisperUI(ctk.CTk):
 
         def on_combo_activate():
             if st["mode"] == "hands_free":
-                # Third press → stop hands-free recording
                 st["mode"] = "idle"
                 if self._recording:
                     self.after(0, self._stop_recording_if_active)
             elif st["mode"] == "waiting":
-                # Second tap within window → enter hands-free mode
                 if st["timer"]:
                     st["timer"].cancel()
                     st["timer"] = None
                 st["mode"] = "hands_free"
                 self._log("Hands-free mode: speak freely, press hotkey again to stop.\n")
             else:
-                # First press → hold-to-record mode
                 st["press_time"] = time.time()
                 st["mode"] = "hold"
                 self.after(0, self._start_recording_if_possible)
@@ -565,11 +665,9 @@ class WhisperUI(ctk.CTk):
             if st["mode"] == "hold":
                 duration = time.time() - st["press_time"]
                 if duration >= 0.35:
-                    # Long hold released → stop immediately
                     st["mode"] = "idle"
                     self.after(0, self._stop_recording_if_active)
                 else:
-                    # Short tap released → wait for possible double-tap
                     st["mode"] = "waiting"
                     def timeout():
                         if st["mode"] == "waiting":
@@ -578,7 +676,6 @@ class WhisperUI(ctk.CTk):
                     t = threading.Timer(0.4, timeout)
                     st["timer"] = t
                     t.start()
-            # hands_free + release → do nothing, stay recording
 
         def on_press(key):
             if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
@@ -606,8 +703,11 @@ class WhisperUI(ctk.CTk):
                 f"  • Hold to record, release to transcribe\n"
                 f"  • Double-tap for hands-free mode\n"
             )
-            with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-                listener.join()
+            self._kb_listener = keyboard.Listener(
+                on_press=on_press, on_release=on_release
+            )
+            self._kb_listener.daemon = True
+            self._kb_listener.start()
         except Exception as e:
             self._log(f"Hotkey listener failed: {e}\n")
 
@@ -633,6 +733,11 @@ class WhisperUI(ctk.CTk):
             pass
 
     def _setup_tray(self):
+        # pystray uses AppKit on macOS, which must run on the main thread.
+        # Since tkinter already owns the main thread, skip the tray on macOS.
+        if sys.platform == "darwin":
+            self._tray_icon = None
+            return
         try:
             from pystray import Icon, Menu, MenuItem
             m = Menu(MenuItem("Toggle Recording", lambda: self.after(0, self._toggle_recording)), MenuItem("Quit", lambda: self.after(0, self._on_close)))
@@ -667,6 +772,38 @@ class WhisperUI(ctk.CTk):
         self._textbox.configure(state="normal")
         self._textbox.delete("1.0", "end")
         self._textbox.configure(state="disabled")
+        self._update_copy_button_state()
+
+    def _transcript_plain_text(self) -> str:
+        return self._textbox.get("1.0", "end").strip()
+
+    def _update_copy_button_state(self):
+        if not getattr(self, "_btn_copy_tx", None):
+            return
+        self._btn_copy_tx.configure(state="normal" if self._transcript_plain_text() else "disabled")
+
+    def _copy_transcript(self):
+        text = self._transcript_plain_text()
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.update_idletasks()
+
+        prev_msg = self._tx_status.cget("text")
+        prev_color = self._tx_status.cget("text_color")
+        self._set_tx_status("Copied to clipboard.", "#27ae60")
+        self._btn_copy_tx.configure(text="Copied!")
+
+        def _restore_copy_feedback():
+            if self._closed:
+                return
+            if self._tx_status.cget("text") == "Copied to clipboard.":
+                self._set_tx_status(prev_msg, prev_color)
+            if self._btn_copy_tx.cget("text") == "Copied!":
+                self._btn_copy_tx.configure(text="Copy")
+
+        self.after(2000, _restore_copy_feedback)
 
     def _on_mode_change(self, val):
         self._transcribe_mode_var.set(val)
@@ -680,6 +817,8 @@ class WhisperUI(ctk.CTk):
         if self._closed:
             return
         self._closed = True
+        if hasattr(self, "_kb_listener") and self._kb_listener:
+            self._kb_listener.stop()
         self.manager.close()
         if hasattr(self, "_tray_icon") and self._tray_icon:
             self._tray_icon.stop()
