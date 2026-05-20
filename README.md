@@ -2,7 +2,7 @@
 ## Testing Phase - Download builds from [actions](https://github.com/sharadcodes/whisper-typer/actions)
 
 Push-to-talk voice transcription using Faster-Whisper.
-Supports Windows, macOS, and Linux.
+Supports Windows (works with package install or direct run), macOS (broken), and Linux (not tested).
 
 ## Quick Start
 
